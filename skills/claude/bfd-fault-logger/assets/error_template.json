@@ -1,0 +1,86 @@
+{
+    "id": "ERR_YYYYMMDD_NNNN",
+    "timestamp": "YYYY-MM-DDTHH:MM:SS.ffffff+HH:MM",
+    "fault_type": "HardFault|BusFault|UsageFault|MemManageFault|DMAError|PeripheralError|WatchdogTimeout|StackOverflow|Unknown",
+    "severity": "Critical|High|Medium|Low|Info",
+    "source": "CPU|Memory|Bus|DMA|Peripheral|Clock|Power|System|Unknown",
+    "description": "错误描述信息",
+    "registers": {
+        "R0": "0x00000000",
+        "R1": "0x00000000",
+        "R2": "0x00000000",
+        "R3": "0x00000000",
+        "R4": "0x00000000",
+        "R5": "0x00000000",
+        "R6": "0x00000000",
+        "R7": "0x00000000",
+        "R8": "0x00000000",
+        "R9": "0x00000000",
+        "R10": "0x00000000",
+        "R11": "0x00000000",
+        "R12": "0x00000000",
+        "SP": "0x20000000",
+        "LR": "0x00000000",
+        "PC": "0x00000000",
+        "xPSR": "0x00000000",
+        "MSP": "0x20000000",
+        "PSP": "0x00000000"
+    },
+    "fault_status": {
+        "CFSR": "0x00000000",
+        "HFSR": "0x00000000",
+        "DFSR": "0x00000000",
+        "AFSR": "0x00000000",
+        "MMFAR": "0x00000000",
+        "BFAR": "0x00000000"
+    },
+    "stack_trace": [
+        "0x00000000",
+        "0x00000000",
+        "0x00000000"
+    ],
+    "context": {
+        "interrupt_depth": 0,
+        "current_task": "task_name",
+        "system_state": "running|idle|error|startup",
+        "uptime_ms": 0,
+        "cpu_load_percent": 0.0,
+        "peripheral_state": {
+            "UART1": {
+                "status": "active|idle|error",
+                "tx_count": 0,
+                "rx_count": 0,
+                "error_count": 0
+            },
+            "SPI1": {
+                "status": "active|idle|error",
+                "transfer_count": 0
+            },
+            "DMA1": {
+                "status": "idle|transferring|error",
+                "channel": 0,
+                "remaining_bytes": 0
+            }
+        },
+        "memory_state": {
+            "heap_used": 0,
+            "heap_total": 0,
+            "stack_used": 0,
+            "stack_total": 0,
+            "msp_current": "0x20000000",
+            "msp_limit": "0x20000000"
+        }
+    },
+    "raw_data": "",
+    "analysis": {
+        "root_cause": "推测的根本原因",
+        "possible_fixes": [
+            "建议的修复方法1",
+            "建议的修复方法2"
+        ],
+        "related_files": [
+            "source_file.c",
+            "header_file.h"
+        ]
+    }
+}

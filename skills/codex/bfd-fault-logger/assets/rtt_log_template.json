@@ -1,0 +1,38 @@
+{
+    "timestamp": "YYYY-MM-DDTHH:MM:SS.ffffff+HH:MM",
+    "level": "error|warn|info|debug|trace",
+    "module": "MODULE_NAME",
+    "message": "日志消息内容",
+    "buffer_index": 0,
+    "raw_data": "原始日志数据",
+    "parsed_data": {
+        "log_timestamp": "HH:MM:SS.mmm",
+        "log_level": "ERROR|WARN|INFO|DEBUG",
+        "module": "模块名称",
+        "hex_values": [
+            "0x00000000"
+        ],
+        "decimal_values": [
+            0
+        ],
+        "strings": [
+            "字符串值"
+        ]
+    },
+    "metadata": {
+        "source_file": "source.c",
+        "source_line": 0,
+        "function_name": "function_name",
+        "thread_id": 0,
+        "cpu_id": 0
+    },
+    "context": {
+        "system_tick": 0,
+        "interrupt_context": false,
+        "dma_active": false,
+        "peripherals_active": [
+            "UART1",
+            "SPI1"
+        ]
+    }
+}

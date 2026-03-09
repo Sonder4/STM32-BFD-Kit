@@ -1,0 +1,43 @@
+; *************************************************************
+; *** Scatter-Loading Description File for STM32F427IIHx  ***
+; *** Generated for ARM Compiler 6 (armclang)              ***
+; *** Compatible with GCC startup code                     ***
+; *************************************************************
+
+; Load region for Flash
+LR_IROM1 0x08000000 0x00200000  {    ; 2MB FLASH
+  ER_IROM1 0x08000000 0x00200000  {  ; load address = execution address
+    *(RESET, +First)                 ; ISR vector table
+    *(InRoot$$Sections)
+    .ANY (+RO)
+    .ANY (+XO)
+  }
+
+  ; Define symbols for GCC compatibility
+  __sidata = Image$$ER_IROM1$$Limit;
+
+  RW_IRAM1 0x20000000 0x00030000  {  ; RW data (192KB RAM)
+    .ANY (+RW +ZI)
+  }
+
+  ; Define symbols for GCC compatibility
+  __data_start = Image$$RW_IRAM1$$Base;
+  __data_end = Image$$RW_IRAM1$$Limit;
+  __bss_start = Image$$RW_IRAM1$$Base;
+  __bss_end = Image$$RW_IRAM1$$Limit;
+
+  RW_IRAM2 0x10000000 0x00010000  {  ; CCM RAM (64KB)
+    .ANY (ccmram)
+  }
+}
+
+; Stack top at end of RAM
+__initial_sp = 0x20000000 + 0x00030000;
+_estack = __initial_sp;
+
+; Heap configuration
+__heap_base = Image$$RW_IRAM1$$ZI$$Limit;
+__heap_size = 0x00005000;
+
+; Stack configuration  
+__stack_bottom = __initial_sp - 0x00005000;

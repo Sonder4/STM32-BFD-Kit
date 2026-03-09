@@ -1,0 +1,15 @@
+{
+  "seeded_at": "2026-03-04T17:34:53+08:00",
+  "family": "h7",
+  "source": ".",
+  "copied": [
+    "STM32H723.svd",
+    "startup_stm32h723xx.s",
+    "startup_stm32h723xx_ac6.s",
+    "STM32H723VGTx_FLASH.ld",
+    "STM32H723XG_FLASH.ld",
+    "flash.jlink.tpl",
+    "debug.jlink.tpl",
+    "rtt.jlink.tpl"
+  ]
+}

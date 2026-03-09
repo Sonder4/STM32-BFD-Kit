@@ -1,0 +1,17 @@
+{
+  "seeded_at": "2026-03-04T17:34:47+08:00",
+  "family": "f4",
+  "source": "../example_f4_project",
+  "copied": [
+    "STM32F427.svd",
+    "startup_stm32f427xx.s",
+    "STM32F427XX_FLASH.ld",
+    "STM32F427XX_FLASH.sct",
+    "STM32F427XX_FLASH_ac6.sct",
+    "rtt.cfg",
+    "stm32f427.cfg",
+    "flash.jlink.tpl",
+    "debug.jlink.tpl",
+    "rtt.jlink.tpl"
+  ]
+}

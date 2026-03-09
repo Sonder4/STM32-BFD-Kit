@@ -1,0 +1,69 @@
+---
+name: bfd-register-capture
+description: Use when sampling STM32 peripheral registers, tracking register changes over time, or exporting register snapshots to CSV for hardware-state analysis.
+---
+
+# BFD Register Capture
+
+Use this skill to capture register evidence with repeatable scripts.
+
+## Quick Start
+
+1. Run bootstrap profile first.
+2. Select peripheral and register set.
+3. Capture short first, then extend duration.
+
+## Core Commands
+
+```bash
+# 0) Bootstrap profile (required)
+python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . --mode check
+```
+
+```bash
+# USART1, 1 second
+./.codex/skills/bfd-register-capture/scripts/capture_registers.sh -p USART1 -d 1 -o logs/debug/usart1_1s.csv
+```
+
+```bash
+# FDCAN1 key status registers
+./.codex/skills/bfd-register-capture/scripts/capture_registers.sh -p FDCAN1 -r CCCR,PSR,ECR,IR,TXBRP,RXF0S -d 5 -o logs/debug/fdcan1_status.csv
+```
+
+```bash
+# Fast status check
+./.codex/skills/bfd-register-capture/scripts/capture_registers.sh -p FDCAN1 -s
+```
+
+```bash
+# High-frequency batch capture
+./.codex/skills/bfd-register-capture/scripts/jlink_batch_capture.sh USART1 10 logs/debug/usart1_batch.csv
+```
+
+## Workflow
+
+1. Run bootstrap profile.
+2. Define peripheral and registers.
+3. Run short validation capture.
+4. Run production capture and export CSV.
+
+## Hard Rules
+
+- Fail-fast if bootstrap profile is missing.
+- Save final captures under `logs/debug/`.
+- Do not sample unknown peripheral addresses.
+- Treat zero-sample output as failed capture.
+
+## Scripts
+
+- `.codex/skills/bfd-register-capture/scripts/capture_registers.sh`
+- `.codex/skills/bfd-register-capture/scripts/capture_registers.ps1`
+- `.codex/skills/bfd-register-capture/scripts/jlink_batch_capture.sh`
+- `.codex/skills/bfd-register-capture/scripts/jlink_fast_capture.py`
+
+## Related Skills
+
+- `bfd-project-init`
+- `bfd-debug-executor`
+- `bfd-rtt-logger`
+- `bfd-data-acquisition`

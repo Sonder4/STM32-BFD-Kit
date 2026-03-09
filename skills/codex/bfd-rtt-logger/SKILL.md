@@ -1,0 +1,66 @@
+---
+name: bfd-rtt-logger
+description: Use when capturing STM32 RTT output, validating runtime behavior after flash/reset, or collecting short runtime evidence from J-Link RTT channels.
+---
+
+# BFD RTT Logger
+
+Use this skill to capture RTT logs with profile-driven defaults.
+
+## Quick Start
+
+1. Run bootstrap profile first.
+2. Use `quick` mode for routine runtime checks.
+3. Use `dual` mode after reset/reconnect flows.
+
+## Core Commands
+
+```bash
+# 0) Bootstrap profile (required)
+python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . --mode check
+```
+
+```bash
+# 1) Quick mode
+./build_tools/jlink/rtt.sh logs/rtt/rtt_quick.log 5 --mode quick
+```
+
+```bash
+# 2) Dual mode for reset-follow capture
+./build_tools/jlink/rtt.sh logs/rtt/rtt_dual.log 6 --mode dual --reset-policy gdb-reset-go
+```
+
+```bash
+# 3) Resolve RTT address from profile ELF
+./.codex/skills/bfd-rtt-logger/scripts/get_rtt_address.sh \
+  --elf "${STM32_ELF}" \
+  --device "${STM32_DEVICE}" \
+  --out logs/debug/rtt_addr_probe.log
+```
+
+## Workflow
+
+1. Run bootstrap and verify profile env.
+2. Confirm RTT symbol/address.
+3. Capture with `quick` or `dual`.
+4. Archive logs and extract key evidence lines.
+
+## Hard Rules
+
+- Fail-fast if bootstrap profile is missing.
+- Save final logs under `logs/rtt/`.
+- In `dual` mode, do not open competing J-Link sessions.
+- Keep final evidence in repository paths only.
+
+## Scripts
+
+- `.codex/skills/bfd-rtt-logger/scripts/rtt_log.sh`
+- `.codex/skills/bfd-rtt-logger/scripts/rtt_log.ps1`
+- `.codex/skills/bfd-rtt-logger/scripts/get_rtt_address.sh`
+
+## Related Skills
+
+- `bfd-project-init`
+- `bfd-debug-interface`
+- `bfd-fault-logger`
+- `bfd-debug-orchestrator`
