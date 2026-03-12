@@ -38,6 +38,28 @@ Legacy overlapping STM32 skills are intended to be removed from active mirrors o
 
 `bfd-data-acquisition` also carries the reusable local-variable probe resource under `resources/local-probe/` for stack-variable sampling workflows.
 
+## New in This Revision
+
+- `bfd-data-acquisition` now supports generic `--mode symbol-auto`
+- `symbol-auto` uses `ELF + DWARF` reflection to decode global/static objects without business-specific hardcoding
+- DWARF schemas are cached under `.codex/bfd/dwarf_cache/` for reuse across repeated inspections
+- RTT failure guidance now explicitly routes to RAM sampling instead of ad-hoc GDB/J-Link command design
+- `bfd-debug-interface` and `bfd-rtt-logger` delegate structured symbol decoding to `bfd-data-acquisition`
+
+Supported V1 reflected type families:
+
+- `struct`
+- `array`
+- `pointer`
+- `typedef`
+- `enum`
+
+Current recommendation:
+
+- first choice: `symbol-auto` for any stable global/static symbol with usable DWARF
+- second choice: `--mode symbol` with an explicit decode profile or layout
+- last choice: raw address sampling or low-level debug commands
+
 ## Fast Init
 
 ```bash
@@ -64,8 +86,46 @@ python3 ./.codex/skills/bfd-cubemx-codegen/scripts/generate_from_ioc.py --projec
 # 3) RTT runtime log
 ./build_tools/jlink/rtt.sh logs/rtt/rtt_$(date +%Y%m%d_%H%M%S).log 5 --mode quick
 
+# 3.5) If RTT has no usable payload, switch to generic RAM decode
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol <global_symbol> \
+  --follow-depth 1 \
+  --format summary \
+  --output logs/data_acq/<global_symbol>.summary
+
 # 4) One-shot debug session
 ./build_tools/jlink/debug.sh | tee logs/debug/debug_$(date +%Y%m%d_%H%M%S).log
+```
+
+## Recommended Data-Acquisition Flow
+
+```bash
+# Generic global/static object decode
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol g_object_state \
+  --follow-depth 0 \
+  --format summary
+
+# Generic pointer-hub decode
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol g_object_hub \
+  --follow-depth 1 \
+  --format json
+
+# Manual fallback when DWARF auto reflection is not suitable
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol \
+  --symbol g_object_array \
+  --count <N> \
+  --decode-profile <profile_name> \
+  --format csv
 ```
 
 ## Runtime Profile Contract

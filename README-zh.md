@@ -38,6 +38,28 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 
 `bfd-data-acquisition` 已纳入 `resources/local-probe/` 资源，用于局部变量运行时地址发布与主机侧指针采样。
 
+## 本次版本新增能力
+
+- `bfd-data-acquisition` 新增通用 `--mode symbol-auto`
+- `symbol-auto` 通过 `ELF + DWARF` 自动反射全局/静态对象，不再依赖业务对象硬编码
+- DWARF schema 会缓存到 `.codex/bfd/dwarf_cache/`，便于重复采样复用
+- RTT 无有效 payload 时，标准流程明确切换到 RAM 采样，而不是临时拼接 GDB/J-Link 命令
+- `bfd-debug-interface` 与 `bfd-rtt-logger` 已把结构化符号解码默认委托给 `bfd-data-acquisition`
+
+当前 V1 自动反射支持：
+
+- `struct`
+- `array`
+- `pointer`
+- `typedef`
+- `enum`
+
+推荐顺序：
+
+- 第一选择：对具备可用 DWARF 的稳定全局/静态符号，优先使用 `symbol-auto`
+- 第二选择：当自动反射不适合时，使用 `--mode symbol` 配合显式 `decode profile` 或 `layout`
+- 最后选择：原始地址采样或底层调试命令
+
 ## 快速初始化
 
 ```bash
@@ -64,8 +86,46 @@ python3 ./.codex/skills/bfd-cubemx-codegen/scripts/generate_from_ioc.py --projec
 # 3) RTT 日志
 ./build_tools/jlink/rtt.sh logs/rtt/rtt_$(date +%Y%m%d_%H%M%S).log 5 --mode quick
 
+# 3.5) 若 RTT 没有有效 payload，则切换到通用 RAM 解码
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol <global_symbol> \
+  --follow-depth 1 \
+  --format summary \
+  --output logs/data_acq/<global_symbol>.summary
+
 # 4) 一次性调试会话
 ./build_tools/jlink/debug.sh | tee logs/debug/debug_$(date +%Y%m%d_%H%M%S).log
+```
+
+## 推荐的数据采集路径
+
+```bash
+# 通用全局/静态对象解码
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol g_object_state \
+  --follow-depth 0 \
+  --format summary
+
+# 通用指针 hub / 指针数组解码
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol g_object_hub \
+  --follow-depth 1 \
+  --format json
+
+# 自动反射不适用时的手工回退路径
+python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol \
+  --symbol g_object_array \
+  --count <N> \
+  --decode-profile <profile_name> \
+  --format csv
 ```
 
 ## 运行配置约定
