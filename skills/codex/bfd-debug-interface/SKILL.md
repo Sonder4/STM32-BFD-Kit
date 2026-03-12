@@ -16,6 +16,8 @@ description: Use when debugging STM32 applications with J-Link or ST-Link, inclu
 
 Use this skill to run standardized STM32 debug sessions with repeatable CLI and GDB commands.
 
+This skill is for debug control, not for routine structured decoding of global/static variables. When the task is "read a symbol and decode its contents", delegate to `bfd-data-acquisition`.
+
 ## Required Precheck
 
 Run bootstrap before any debug action:
@@ -32,6 +34,36 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
   - `logs/hw_error/` for fault records
 - Do not keep final artifacts in `/tmp`.
 - Fail-fast when `.codex/bfd/active_profile.env` is missing.
+
+## Delegation Rule: Global Symbol Content
+
+Do not hand-write `x/...`, `monitor mem32`, or ad-hoc J-Link memory sequences for structured global/static objects when all of the following are true:
+
+- the ELF is available
+- the target object is a global/static symbol
+- the task needs named-field output rather than raw words
+
+In that case, switch to `bfd-data-acquisition` and use the generic `symbol-auto` contract first.
+
+Default delegated command:
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol <global_symbol> \
+  --follow-depth 1 \
+  --format summary \
+  --output logs/data_acq/<global_symbol>.summary
+```
+
+If `symbol-auto` cannot decode the target due to unsupported DWARF features, fall back to `bfd-data-acquisition --mode symbol` with an explicit `--decode-profile` or `--layout`.
+
+Use raw GDB/J-Link memory commands only when:
+
+- no ELF symbol is available
+- the task is register-centric rather than data-centric
+- the address must be inspected before a reusable decode contract exists
 
 ## Tool Resolution
 
@@ -210,6 +242,8 @@ x/5i $pc
 x/s 0x20001000
 x/10wx 0x20000000
 ```
+
+For one-off raw address checks these commands are appropriate. For repeatable structured RAM sampling, prefer `bfd-data-acquisition` so the symbol contract, cache, decoding, and outputs are standardized.
 
 #### Format Specifiers
 

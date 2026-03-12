@@ -17,3 +17,56 @@
     - AGENTS.md
     - BFD-Kit/skills/codex/*
     - BFD-Kit/skills/claude/*
+
+- id: learning-20260312-bfd-jlink-flash-bash-wrapper
+  category: best_practice
+  area: flash
+  status: promoted
+  summary: 当 build_tools/jlink/flash.sh 缺少执行权限时，应直接使用 bash 包装调用并保留原始日志，而不是误判为 J-Link 或目标连接失败。
+  promoted_to:
+    - BFD-Kit/skills/codex/bfd-flash-programmer/SKILL.md
+
+- id: learning-20260312-bfd-motor-feedback-ram-first
+  category: best_practice
+  area: debug
+  status: promoted
+  summary: 在本仓库的 STM32F427 + DJI M3508 联调中，quick RTT 可能没有有效 payload；电机在线与反馈核查应优先读取 RAM 中的 DJIMotor measure 结构体。
+  promoted_to:
+    - BFD-Kit/skills/codex/bfd-rtt-logger/SKILL.md
+
+- id: learning-20260312-bfd-symbol-sampling-standard
+  category: best_practice
+  area: scripts
+  status: promoted
+  summary: 对全局变量、指针数组和 DJI 电机实例反馈的 RAM 采样，应统一走 ELF symbol + decode profile + summary/json/csv 输出流程，而不是临时拼接 GDB/JLink 命令和手工解码。
+  promoted_to:
+    - BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py
+    - BFD-Kit/skills/codex/bfd-data-acquisition/SKILL.md
+    - BFD-Kit/skills/codex/bfd-debug-interface/SKILL.md
+    - BFD-Kit/skills/codex/bfd-rtt-logger/SKILL.md
+
+- id: learning-20260312-bfd-profile-search-upward
+  category: best_practice
+  area: scripts
+  status: promoted
+  summary: 供 AI 直接调用的 BFD-Kit 脚本不能假定固定目录深度，应沿父目录搜索 `.codex/bfd/active_profile.env` 与兼容 profile，否则镜像路径与活跃路径会出现默认设备不一致。
+  promoted_to:
+    - BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py
+
+- id: learning-20260312-jlink-sampling-must-be-serialized
+  category: best_practice
+  area: workflow
+  status: resolved
+  summary: 对同一目标板的 J-Link RAM sampling、RTT 和 GDB attach 需要串行执行；并发会话会导致 probe 争用并返回 Cannot connect to J-Link。
+
+- id: learning-20260312-bfd-symbol-auto-cache
+  category: best_practice
+  area: scripts
+  status: promoted
+  summary: 对全局或静态对象的 RAM 解码应优先使用 `symbol-auto`，并把 `.codex/bfd/dwarf_cache/` 作为标准 schema cache；cache 回读必须把基础整数、浮点和布尔类型视为内建叶子节点，而不是要求每个基础类型都落盘为独立 schema 文件。
+  promoted_to:
+    - BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py
+    - BFD-Kit/skills/codex/bfd-data-acquisition/scripts/dwarf_decode.py
+    - BFD-Kit/skills/codex/bfd-data-acquisition/SKILL.md
+    - BFD-Kit/skills/codex/bfd-debug-interface/SKILL.md
+    - BFD-Kit/skills/codex/bfd-rtt-logger/SKILL.md

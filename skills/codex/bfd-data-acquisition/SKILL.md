@@ -1,6 +1,6 @@
 ---
 name: bfd-data-acquisition
-description: Use when acquiring STM32 runtime data from variables, memory regions, or RTT channels and converting captures into CSV or analysis artifacts.
+description: Use when acquiring STM32 runtime data from global symbols, memory regions, stack-published local slots, or RTT channels and converting captures into structured artifacts for analysis.
 ---
 
 # BFD Data Acquisition
@@ -12,45 +12,123 @@ description: Use when acquiring STM32 runtime data from variables, memory region
 - Promote reusable fixes into the affected BFD-Kit asset in the same task when feasible: update the relevant `SKILL.md`, script, wrapper, or resource so the next run benefits by default.
 - When a learning is promoted into a skill or script, append a short entry to `BFD-Kit/.learnings/CHANGELOG.md` and mention the improvement in the task close-out.
 
-Use this skill to collect runtime data and produce analysis-ready artifacts.
+## Purpose
 
-## Quick Start
+Use this skill when the task is "show the contents of this global/static object" and the object can be resolved from an ELF.
 
-1. Run bootstrap profile first.
-2. Select source: variable, memory address, or RTT.
-3. Capture raw data first, then run analysis.
+This skill is the default path for:
 
-## Core Commands
+- global/static object inspection
+- pointer-hub decoding
+- enum-bearing state objects
+- stack-published local-slot capture through pointer symbols
+- raw RAM capture only when no stable symbol exists
+
+This skill is not tied to any motor model or business object. The primary workflow is generic `ELF + symbol + DWARF`.
+
+## Required Precheck
+
+Run bootstrap before any acquisition command:
 
 ```bash
-# 0) Bootstrap profile (required)
 python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . --mode check
 ```
 
-```bash
-# Variable capture
-python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
-  --device "${STM32_DEVICE}" --variable g_sensorData --count 1000 \
-  --output logs/data_acq/sensor_data.csv
-```
+Fail fast if `${STM32_ELF}` or the active bootstrap profile is missing.
+
+## Primary Command Contract
+
+Primary script:
 
 ```bash
-# Memory region capture
-python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
-  --device "${STM32_DEVICE}" --address 0x20000000 --size 256 --count 100 \
-  --output logs/data_acq/mem_watch.csv
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py ...
 ```
 
-```bash
-# RTT stream capture
-python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
-  --device "${STM32_DEVICE}" --rtt --channel 0 --count 10000 \
-  --output logs/data_acq/rtt_stream.csv
-```
+Primary mode:
 
 ```bash
-# Runtime-published local variable capture
-python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol <global_symbol> \
+  --follow-depth 1 \
+  --format summary \
+  --output logs/data_acq/<symbol>.summary
+```
+
+Meaning of the primary arguments:
+
+- `--mode symbol-auto`: resolve the symbol from ELF, reflect its DWARF type, reuse or rebuild schema cache, sample RAM, and decode named fields.
+- `--symbol <global_symbol>`: required global or static object symbol.
+- `--follow-depth <N>`: pointer follow depth.
+- `--format summary|json|csv`: output renderer.
+
+`symbol-auto` rules:
+
+- requires `--symbol`
+- supports only `--capture-mode snapshot`
+- rejects manual decode options such as `--decode-profile`, `--layout`, `--pointer-array`, and `--follow-pointer`
+- writes or reuses cache under `.codex/bfd/dwarf_cache/`
+
+## Follow-Depth Rules
+
+- `--follow-depth 0`: decode the root object only; pointers remain address metadata.
+- `--follow-depth 1`: follow one pointer layer. Use this first for pointer hubs and object tables.
+- `--follow-depth >1`: recursively follow nested pointers. Increase only when the object layout requires it.
+
+## Standard Workflow Order
+
+1. Use `--mode symbol-auto` first when the target object has DWARF-supported type information.
+2. Fall back to `--mode symbol` only when:
+   - the target type contains unsupported DWARF features
+   - a manual decode profile is intentionally narrower than the full object
+   - a typed scalar layout is sufficient
+3. Use `--pointer-symbol` only for stack-published local data.
+4. Use raw `--address` capture only when no stable symbol exists.
+
+## Generic Command Templates
+
+### 1. Decode a Global or Static Object
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol g_object_state \
+  --follow-depth 0 \
+  --format summary \
+  --output logs/data_acq/g_object_state.summary
+```
+
+### 2. Decode a Pointer Hub or Pointer Array
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol g_object_hub \
+  --follow-depth 1 \
+  --format json \
+  --output logs/data_acq/g_object_hub.json
+```
+
+### 3. Manual Symbol Fallback When Auto Reflection Is Not Suitable
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol \
+  --symbol g_object_array \
+  --count <N> \
+  --decode-profile <profile_name> \
+  --format csv \
+  --output logs/data_acq/g_object_array.csv
+```
+
+### 4. Stack-Published Local Variable Capture
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
   --elf "${STM32_ELF}" \
   --pointer-symbol g_local_probe_addr \
   --seq-symbol g_local_probe_seq \
@@ -61,41 +139,37 @@ python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
   --output logs/data_acq/local_probe.csv
 ```
 
+### 5. Raw Address Capture
+
 ```bash
-# Analysis
-python3 ./.codex/skills/bfd-data-acquisition/scripts/data_analysis.py --input logs/data_acq/sensor_data.csv --stats
-python3 ./.codex/skills/bfd-data-acquisition/scripts/data_analysis.py --input logs/data_acq/sensor_data.csv --fft --output logs/data_acq/spectrum.png
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --address 0x20000000 \
+  --layout u32x4 \
+  --count 20 \
+  --mode snapshot \
+  --output logs/data_acq/raw_u32.csv
 ```
 
-## Workflow
+## Output Policy
 
-1. Run bootstrap profile.
-2. Run short trial capture.
-3. Run full capture and store raw outputs.
-4. Generate stats/plots from stored artifacts.
+- Save final artifacts under `logs/data_acq/`.
+- Use `summary` for fast operator judgment.
+- Use `json` for downstream AI or tool consumption.
+- Use `csv` for manual table review.
+- Treat `.codex/bfd/dwarf_cache/` as a reusable cache, not as the final evidence artifact.
+- Do not run multiple J-Link RAM sampling, RTT, or GDB attach flows against the same target in parallel.
 
-## Hard Rules
+## Decision Rules
 
-- Fail-fast if bootstrap profile is missing.
-- Save capture and analysis outputs under `logs/data_acq/`.
-- Match sampling rate to signal characteristics.
-- Confirm ELF symbols before variable-based capture.
-- For stack-local variables, publish the runtime address from firmware first; do not assume ELF alone can locate a live stack slot.
+Use this skill instead of hand-written GDB or J-Link memory expressions when:
 
-## Scripts
+- an ELF symbol exists
+- the task is "inspect this global/static object"
+- the task needs named fields rather than raw words
+- RTT produced no payload and RAM is the next validation path
 
-- `.codex/skills/bfd-data-acquisition/scripts/data_acq.py`
-- `.codex/skills/bfd-data-acquisition/scripts/data_analysis.py`
+Switch to `bfd-debug-interface` only when:
 
-## Resources
-
-- `.codex/skills/bfd-data-acquisition/resources/local-probe/local_probe_runtime.h`
-- `.codex/skills/bfd-data-acquisition/resources/local-probe/local_probe_runtime.c`
-- `.codex/skills/bfd-data-acquisition/resources/local-probe/local_probe_integration.md`
-
-## Related Skills
-
-- `bfd-project-init`
-- `bfd-register-capture`
-- `bfd-rtt-logger`
-- `bfd-debug-interface`
+- the task is register-centric
+- the symbol is not available
+- lower-level breakpoint, watchpoint, or fault control is required

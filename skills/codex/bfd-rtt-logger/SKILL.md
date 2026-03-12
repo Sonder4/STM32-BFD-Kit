@@ -51,6 +51,64 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
 2. Confirm RTT symbol/address.
 3. Capture with `quick` or `dual`.
 4. Archive logs and extract key evidence lines.
+5. If `quick` mode reports `fallback_no_payload`, `RTT_SUCCESS=0`, or `RTT Control Block not found`, stop RTT-based judgment and switch to standardized RAM sampling.
+
+## Mandatory Fallback: RTT Failure to RAM Sampling
+
+Trigger this branch when any of the following is observed:
+
+- `fallback_no_payload`
+- `RTT_SUCCESS=0`
+- `RTT Control Block not found`
+- RTT attaches but produces no usable application payload
+
+Do not treat these results as proof that motors are offline.
+
+Primary fallback target:
+
+- first choice: `bfd-data-acquisition --mode symbol-auto`
+- second choice: `bfd-data-acquisition --mode symbol` when the target type requires a manual profile or layout
+- last choice: raw address sampling or low-level debug commands
+
+### Fallback Step 1: Generic Symbol-Auto Decode
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol-auto \
+  --symbol <global_symbol> \
+  --follow-depth 1 \
+  --format summary \
+  --output logs/data_acq/<global_symbol>.summary
+```
+
+### Fallback Step 2: Manual Symbol Fallback When Auto Reflection Is Not Suitable
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol \
+  --symbol <global_symbol> \
+  --count <N> \
+  --decode-profile <profile_name> \
+  --format summary \
+  --output logs/data_acq/<global_symbol>.summary
+```
+
+Archival form:
+
+```bash
+python3 BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py \
+  --elf "${STM32_ELF}" \
+  --mode symbol \
+  --symbol <global_symbol> \
+  --count <N> \
+  --decode-profile <profile_name> \
+  --format json \
+  --output logs/data_acq/<global_symbol>.json
+```
+
+This fallback is the default next action after RTT payload failure. Do not invent a new J-Link or GDB command first.
 
 ## Hard Rules
 
@@ -58,6 +116,8 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
 - Save final logs under `logs/rtt/`.
 - In `dual` mode, do not open competing J-Link sessions.
 - Keep final evidence in repository paths only.
+- RTT attach can succeed while still producing no usable application payload; treat `fallback_no_payload` as an acquisition limitation, not proof that the target object is stale or offline.
+- After RTT fallback, use `bfd-data-acquisition` as the primary RAM-decoding path. Use `bfd-debug-interface` only if symbol resolution fails or lower-level debug control is required.
 
 ## Scripts
 

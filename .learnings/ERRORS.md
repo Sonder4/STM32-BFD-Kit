@@ -7,3 +7,32 @@
 
 ---
 
+- id: error-20260312-jlink-flash-permission-denied
+  area: flash
+  status: resolved
+  summary: 直接执行 ./build_tools/jlink/flash.sh 时返回 Permission denied，根因是脚本缺少执行位；改用 bash ./build_tools/jlink/flash.sh 后烧录成功。
+
+- id: error-20260312-rtt-quick-no-payload-for-motor-check
+  area: debug
+  status: resolved
+  summary: quick RTT attach 返回 fallback_no_payload，不能用于判定 M3508 在线状态；改用 J-Link RAM 采样读取 __hub_m3508_inst 和 measure 字段后确认 1-4 号电机均有有效反馈。
+
+- id: error-20260312-global-symbol-sampling-too-manual
+  area: scripts
+  status: resolved
+  summary: 缺少“ELF + symbol + decode profile”的标准命令前，AI 需要临时设计 GDB/JLink 内存读取与十六进制解码命令；现已补充 symbol mode、内置 decode profile 和 RTT 失败后的 RAM sampling 固定模板。
+
+- id: error-20260312-bfd-data-acq-profile-default-from-bfd-kit
+  area: scripts
+  status: resolved
+  summary: 从 BFD-Kit 镜像路径直接运行 data_acq.py 时，旧实现未正确向上定位 .codex/bfd/active_profile.env，导致设备默认值回退为硬编码 STM32H743VI；现已改为沿父目录搜索 profile。
+
+- id: error-20260312-jlink-session-contention-on-parallel-sampling
+  area: workflow
+  status: resolved
+  summary: 并行执行两个 J-Link RAM 采样命令会竞争同一 probe，后启动会话可能返回 Cannot connect to J-Link；对同一目标的 J-Link 采样必须串行执行。
+
+- id: error-20260312-symbol-auto-cache-builtin-scalar-gap
+  area: scripts
+  status: resolved
+  summary: symbol-auto 的 DWARF cache 二次回读未命中，根因是 `long long unsigned int` 等基础类型未被视为内建标量，导致递归类型装载回退到 rebuild；现已补齐基础类型白名单与通用解码支持。

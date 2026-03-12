@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import json
 import os
 import re
@@ -21,16 +22,24 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+
+
+def find_profile_candidate_paths(script_path: Path) -> List[Path]:
+    candidates: List[Path] = []
+    for parent in [script_path.resolve().parent, *script_path.resolve().parents]:
+        for candidate in (
+            parent / ".codex/bfd/active_profile.env",
+            parent / ".codex/stm32/bootstrap/active_profile.env",
+        ):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
 
 
 def load_profile_defaults() -> Dict[str, str]:
     script_path = Path(__file__).resolve()
-    repo_root = script_path.parents[4]
-    candidates = [
-        repo_root / ".codex/bfd/active_profile.env",
-        repo_root / ".codex/stm32/bootstrap/active_profile.env",
-    ]
+    candidates = find_profile_candidate_paths(script_path)
 
     values: Dict[str, str] = {}
     for path in candidates:
@@ -60,12 +69,45 @@ SRAM_ADDRESS_RANGES = (
     (0x20000000, 0x20040000),
     (0x10000000, 0x10010000),
 )
+BUILTIN_SCALAR_TYPE_REFS = {
+    "type:unsigned char",
+    "type:char",
+    "type:signed char",
+    "type:_Bool",
+    "type:short unsigned int",
+    "type:short int",
+    "type:unsigned int",
+    "type:int",
+    "type:long unsigned int",
+    "type:long int",
+    "type:long long unsigned int",
+    "type:long long int",
+    "type:float",
+    "type:double",
+    "type:void",
+}
 
 JLINK_EXE = shutil.which("JLinkExe") or "JLinkExe"
 JLINK_GDB_SERVER = shutil.which("JLinkGDBServerCLExe") or "JLinkGDBServerCLExe"
 JLINK_RTT_VIEWER = shutil.which("JLinkRTTLogger") or "JLinkRTTLogger"
 ARM_NONE_EABI_NM = shutil.which("arm-none-eabi-nm") or "arm-none-eabi-nm"
 ARM_NONE_EABI_GDB = shutil.which("arm-none-eabi-gdb") or "arm-none-eabi-gdb"
+_LOCAL_MODULE_CACHE: Dict[str, Any] = {}
+
+
+def load_local_module(module_name: str) -> Any:
+    if module_name in _LOCAL_MODULE_CACHE:
+        return _LOCAL_MODULE_CACHE[module_name]
+
+    module_path = Path(__file__).resolve().with_name(f"{module_name}.py")
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to resolve local module: {module_name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    _LOCAL_MODULE_CACHE[module_name] = module
+    return module
 
 
 @dataclass(frozen=True)
@@ -102,6 +144,13 @@ class Layout:
         return self.decode(raw)
 
 
+@dataclass(frozen=True)
+class DecodeProfile:
+    name: str
+    size: int
+    decoder: Callable[..., Dict[str, Any]]
+
+
 def parse_layout(layout_text: str) -> Layout:
     match = re.fullmatch(r"(u8|u16|u32|s8|s16|s32|f32)x([1-9][0-9]*)", layout_text.strip())
     if not match:
@@ -133,6 +182,335 @@ def parse_layout(layout_text: str) -> Layout:
         element_size=element_size,
         decode_format=decode_format,
     )
+
+
+def format_hex32(value: int) -> str:
+    return f"0x{value & 0xFFFFFFFF:08X}"
+
+
+def decode_u32_ptr_array_entries(symbol: str, symbol_address: int, pointer_values: Sequence[int]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for index, pointer_value in enumerate(pointer_values):
+        rows.append(
+            {
+                "index": index,
+                "symbol": symbol,
+                "symbol_address": format_hex32(symbol_address),
+                "entry_address": format_hex32(symbol_address + (index * 4)),
+                "pointer_value": format_hex32(int(pointer_value)),
+                "is_null": int(pointer_value) == 0,
+                "is_sram_pointer": is_valid_sram_pointer(int(pointer_value)),
+            }
+        )
+    return rows
+
+
+def decode_dji_motor_measure_bytes(data: bytes, *, symbol: str, base_address: int, index: int) -> Dict[str, Any]:
+    if len(data) != 28:
+        raise ValueError(f"dji_motor_measure expects 28 bytes, got {len(data)}")
+
+    (
+        last_ecd,
+        ecd,
+        angle_single_round,
+        speed_aps,
+        speed_rpm,
+        real_current,
+        temperature,
+        total_angle,
+        total_round,
+    ) = struct.unpack("<HHffhhB3xfi", data)
+
+    return {
+        "index": index,
+        "symbol": symbol,
+        "base_address": format_hex32(base_address),
+        "last_ecd": last_ecd,
+        "ecd": ecd,
+        "angle_single_round_deg": angle_single_round,
+        "speed_deg_per_s": speed_aps,
+        "speed_rpm": speed_rpm,
+        "real_current": real_current,
+        "temperature_c": temperature,
+        "total_angle_deg": total_angle,
+        "total_round": total_round,
+    }
+
+
+def decode_dji_motor_instance_measure_bytes(
+    data: bytes,
+    *,
+    symbol: str,
+    instance_pointer: int,
+    index: int,
+) -> Dict[str, Any]:
+    row = decode_dji_motor_measure_bytes(
+        data,
+        symbol=symbol,
+        base_address=instance_pointer,
+        index=index,
+    )
+    row["instance_pointer"] = format_hex32(instance_pointer)
+    row["measure_base_address"] = format_hex32(instance_pointer)
+    return row
+
+
+def get_decode_profile_registry() -> Dict[str, DecodeProfile]:
+    return {
+        "u32_ptr_array": DecodeProfile(
+            name="u32_ptr_array",
+            size=4,
+            decoder=lambda *_args, **_kwargs: {},
+        ),
+        "dji_motor_measure": DecodeProfile(
+            name="dji_motor_measure",
+            size=28,
+            decoder=decode_dji_motor_measure_bytes,
+        ),
+        "dji_motor_instance_measure": DecodeProfile(
+            name="dji_motor_instance_measure",
+            size=28,
+            decoder=decode_dji_motor_instance_measure_bytes,
+        ),
+    }
+
+
+def build_symbol_summary(metadata: Dict[str, Any], rows: Sequence[Dict[str, Any]]) -> str:
+    lines = [
+        f"mode: {metadata.get('mode', 'symbol')}",
+        f"symbol: {metadata.get('symbol', '')}",
+        f"decode_profile: {metadata.get('decode_profile', '')}",
+        f"entries: {len(rows)}",
+    ]
+
+    if rows and "pointer_value" in rows[0]:
+        null_entries = sum(1 for row in rows if row.get("is_null"))
+        sram_entries = sum(1 for row in rows if row.get("is_sram_pointer"))
+        lines.append(f"null_entries: {null_entries}")
+        lines.append(f"sram_pointer_entries: {sram_entries}")
+
+    for row in rows:
+        index = row.get("index", "?")
+        if "pointer_value" in row and "speed_rpm" not in row:
+            lines.append(
+                f"[{index}] pointer={row.get('pointer_value')} "
+                f"null={int(bool(row.get('is_null')))} sram={int(bool(row.get('is_sram_pointer')))}"
+            )
+            continue
+        if "speed_rpm" in row:
+            pointer_text = ""
+            if "instance_pointer" in row:
+                pointer_text = f" instance={row.get('instance_pointer')}"
+            lines.append(
+                f"[{index}]{pointer_text} ecd={row.get('ecd')} "
+                f"speed_rpm={row.get('speed_rpm')} current={row.get('real_current')} "
+                f"temp_c={row.get('temperature_c')}"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def default_dwarf_cache_root(script_path: Optional[Path] = None) -> Path:
+    resolved_script = (script_path or Path(__file__)).resolve()
+    for parent in [resolved_script.parent, *resolved_script.parents]:
+        codex_dir = parent / ".codex"
+        if codex_dir.is_dir():
+            return codex_dir / "bfd/dwarf_cache"
+    return Path(".codex/bfd/dwarf_cache")
+
+
+def hydrate_symbol_schema(dwarf_schema: Any, payload: Mapping[str, Any]) -> Any:
+    return dwarf_schema.SymbolSchema(
+        elf_fingerprint=str(payload["elf_fingerprint"]),
+        symbol=str(payload["symbol"]),
+        address=str(payload["address"]),
+        root_type_ref=str(payload["root_type_ref"]),
+    )
+
+
+def hydrate_type_schema(dwarf_schema: Any, payload: Mapping[str, Any]) -> Any:
+    kind = payload["kind"]
+    if kind == "struct":
+        return dwarf_schema.StructTypeSchema(
+            type_id=str(payload["type_id"]),
+            name=str(payload["name"]),
+            size=int(payload["size"]),
+            fields=[
+                dwarf_schema.FieldSchema(
+                    name=str(field["name"]),
+                    offset=int(field["offset"]),
+                    type_ref=str(field["type_ref"]),
+                )
+                for field in payload.get("fields", [])
+            ],
+        )
+    if kind == "array":
+        return dwarf_schema.ArrayTypeSchema(
+            type_id=str(payload["type_id"]),
+            name=str(payload["name"]),
+            size=int(payload["size"]),
+            count=int(payload["count"]),
+            element_type_ref=str(payload["element_type_ref"]),
+            stride=int(payload["stride"]),
+        )
+    if kind == "pointer":
+        return dwarf_schema.PointerTypeSchema(
+            type_id=str(payload["type_id"]),
+            name=str(payload["name"]),
+            size=int(payload["size"]),
+            pointer_size=int(payload["pointer_size"]),
+            target_type_ref=str(payload["target_type_ref"]),
+        )
+    if kind == "enum":
+        return dwarf_schema.EnumTypeSchema(
+            type_id=str(payload["type_id"]),
+            name=str(payload["name"]),
+            size=int(payload["size"]),
+            underlying_type=str(payload["underlying_type"]),
+            values={str(key): int(value) for key, value in dict(payload.get("values", {})).items()},
+        )
+    raise ValueError(f"unsupported cached schema kind: {kind}")
+
+
+def iter_nested_type_refs(payload: Mapping[str, Any]) -> List[str]:
+    kind = payload["kind"]
+    if kind == "struct":
+        return [str(field["type_ref"]) for field in payload.get("fields", [])]
+    if kind == "array":
+        return [str(payload["element_type_ref"])]
+    if kind == "pointer":
+        return [str(payload["target_type_ref"])]
+    return []
+
+
+def load_symbol_auto_schema_from_cache(
+    *,
+    cache_root: Path,
+    elf_path: Path,
+    symbol_name: str,
+) -> Optional[Tuple[Any, Dict[str, Any]]]:
+    dwarf_schema = load_local_module("dwarf_schema")
+    elf_fingerprint = dwarf_schema.compute_elf_fingerprint(elf_path)
+    symbol_path = dwarf_schema.symbol_cache_path(cache_root, elf_fingerprint, symbol_name)
+    if not symbol_path.is_file():
+        return None
+
+    symbol_payload = json.loads(symbol_path.read_text(encoding="utf-8"))
+    if not dwarf_schema.is_schema_version_compatible(symbol_payload):
+        return None
+    if str(symbol_payload.get("elf_fingerprint", "")) != elf_fingerprint:
+        return None
+
+    symbol_schema = hydrate_symbol_schema(dwarf_schema, symbol_payload)
+    type_schemas: Dict[str, Any] = {}
+    pending = [symbol_schema.root_type_ref]
+    while pending:
+        type_ref = pending.pop()
+        if type_ref in type_schemas or type_ref in BUILTIN_SCALAR_TYPE_REFS or type_ref.startswith("unsupported:"):
+            continue
+
+        type_path = dwarf_schema.type_cache_path(cache_root, elf_fingerprint, type_ref)
+        if not type_path.is_file():
+            return None
+
+        type_payload = json.loads(type_path.read_text(encoding="utf-8"))
+        if not dwarf_schema.is_schema_version_compatible(type_payload):
+            return None
+
+        schema = hydrate_type_schema(dwarf_schema, type_payload)
+        type_schemas[type_ref] = schema
+        pending.extend(iter_nested_type_refs(type_payload))
+
+    return symbol_schema, type_schemas
+
+
+def reflect_symbol_auto_schema(
+    *,
+    cache_root: Path,
+    elf_path: Path,
+    symbol_name: str,
+) -> Tuple[Any, Dict[str, Any], str]:
+    load_local_module("dwarf_schema")
+    dwarf_reflect = load_local_module("dwarf_reflect")
+    symbol_schema, type_schemas = dwarf_reflect.reflect_symbol_from_elf(elf_path, symbol_name)
+    dwarf_reflect.emit_symbol_cache(cache_root, elf_path, symbol_schema, type_schemas)
+    return symbol_schema, type_schemas, "rebuild"
+
+
+def resolve_symbol_auto_schema(
+    *,
+    cache_root: Path,
+    elf_path: Path,
+    symbol_name: str,
+) -> Tuple[Any, Dict[str, Any], str]:
+    cached = load_symbol_auto_schema_from_cache(
+        cache_root=cache_root,
+        elf_path=elf_path,
+        symbol_name=symbol_name,
+    )
+    if cached is not None:
+        symbol_schema, type_schemas = cached
+        return symbol_schema, type_schemas, "hit"
+
+    return reflect_symbol_auto_schema(
+        cache_root=cache_root,
+        elf_path=elf_path,
+        symbol_name=symbol_name,
+    )
+
+
+def capture_symbol_auto_rows(
+    acq: "DataAcquisition",
+    *,
+    symbol_name: str,
+    symbol_address: int,
+    root_type_ref: str,
+    type_schemas: Mapping[str, Any],
+    follow_depth: int,
+) -> List[Dict[str, Any]]:
+    dwarf_decode = load_local_module("dwarf_decode")
+    root_size = dwarf_decode.type_byte_size(root_type_ref, type_schemas)
+    root_raw = acq.read_snapshot_block(symbol_address, root_size)
+    decoded_root = dwarf_decode.decode_bytes_by_type(
+        root_raw,
+        root_type_ref,
+        type_schemas,
+        follow_depth=follow_depth,
+        read_memory=lambda address, size: acq.read_snapshot_block(address, size),
+    )
+
+    rows: List[Dict[str, Any]] = []
+    if isinstance(decoded_root, list):
+        iterable = list(enumerate(decoded_root))
+    else:
+        iterable = [(0, decoded_root)]
+
+    for index, item in iterable:
+        row: Dict[str, Any] = {
+            "symbol": symbol_name,
+            "__index__": index,
+            "__address__": format_hex32(symbol_address),
+            "__decode_status__": "ok",
+        }
+
+        if isinstance(item, dict) and "pointer_value" in item:
+            row["pointer_value"] = item["pointer_value"]
+            row["is_null"] = item.get("is_null", False)
+            row["is_sram_pointer"] = item.get("is_sram_pointer", False)
+            row["__address__"] = item["pointer_value"]
+            row["__decode_status__"] = item.get("decode_status", "ok")
+            if isinstance(item.get("pointee"), dict):
+                row.update(item["pointee"])
+            else:
+                for key, value in item.items():
+                    if key not in {"pointer_value", "is_null", "is_sram_pointer", "decode_status", "pointee"}:
+                        row[key] = value
+        elif isinstance(item, dict):
+            row.update(item)
+        else:
+            row["value"] = item
+
+        rows.append(row)
+    return rows
 
 
 def build_nonstop_setup_commands(port: int = DEFAULT_GDB_PORT) -> List[str]:
@@ -248,6 +626,24 @@ def write_memory_csv(output_path: Path, samples: Sequence[Dict[str, Any]]) -> No
 def write_json(output_path: Path, metadata: Dict[str, Any], samples: Sequence[Dict[str, Any]]) -> None:
     with output_path.open("w", encoding="utf-8") as handle:
         json.dump({"metadata": metadata, "data": list(samples)}, handle, indent=2)
+
+
+def write_rows_csv(output_path: Path, rows: Sequence[Dict[str, Any]]) -> None:
+    headers: List[str] = []
+    for row in rows:
+        for key in row.keys():
+            if key not in headers:
+                headers.append(key)
+
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=headers)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def write_summary(output_path: Path, summary_text: str) -> None:
+    output_path.write_text(summary_text, encoding="utf-8")
 
 
 class GdbCommandSession:
@@ -732,6 +1128,113 @@ def resolve_interval_ms(args: argparse.Namespace) -> int:
     return 10
 
 
+def create_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="STM32 Data Acquisition Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s --variable g_sensorData --layout f32x3 --count 200 --mode nonstop
+  %(prog)s --address 0x20000000 --layout u32x4 --count 50 --mode snapshot
+  %(prog)s --mode symbol --symbol __hub_m3508_inst --pointer-array --count 4 --decode-profile u32_ptr_array
+  %(prog)s --mode symbol --symbol __hub_m3508_inst --pointer-array --follow-pointer --count 4 --decode-profile dji_motor_instance_measure
+  %(prog)s --mode symbol-auto --symbol __hub_m3508_inst --follow-depth 1 --format summary
+        """,
+    )
+
+    parser.add_argument("--device", "-d", default=DEFAULT_DEVICE, help=f"Target device (default: {DEFAULT_DEVICE})")
+    parser.add_argument(
+        "--interface",
+        "-i",
+        default=DEFAULT_INTERFACE,
+        choices=["SWD", "JTAG"],
+        help="Debug interface",
+    )
+    parser.add_argument("--speed", "-s", type=int, default=DEFAULT_SPEED, help="Interface speed in kHz")
+
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument("--variable", "-v", help="Variable name to monitor")
+    source_group.add_argument("--address", "-a", help="Memory address (hex)")
+    source_group.add_argument("--pointer-symbol", help="Symbol that stores a runtime target address")
+    source_group.add_argument("--rtt", action="store_true", help="Generate RTT capture helper script")
+    source_group.add_argument("--symbol", help="Global/static symbol to sample in symbol mode")
+
+    parser.add_argument(
+        "--mode",
+        default="nonstop",
+        choices=["nonstop", "snapshot", "symbol", "symbol-auto"],
+        help="Legacy capture mode or symbol sampling mode",
+    )
+    parser.add_argument(
+        "--capture-mode",
+        choices=["nonstop", "snapshot"],
+        default="snapshot",
+        help="Underlying memory access mode used by --mode symbol",
+    )
+    parser.add_argument("--layout", help="Typed layout, e.g. u32x1, s16x8, f32x3")
+    parser.add_argument("--decode-profile", choices=sorted(get_decode_profile_registry().keys()))
+    parser.add_argument("--pointer-array", action="store_true", help="Interpret symbol content as a u32 pointer array")
+    parser.add_argument("--follow-pointer", action="store_true", help="Read and decode pointed objects for each pointer array entry")
+    parser.add_argument("--follow-depth", type=int, default=0, help="Pointer follow depth used by --mode symbol-auto")
+    parser.add_argument("--size", type=int, default=4, help="Raw memory block size in bytes")
+    parser.add_argument("--count", "-c", type=int, default=100, help="Number of samples or symbol entries")
+    parser.add_argument("--rate", "-r", type=int, default=1000, help="Sample rate in Hz")
+    parser.add_argument("--interval-ms", type=int, help="Sample interval in ms")
+    parser.add_argument("--interval", type=int, help="Legacy alias for interval-ms")
+    parser.add_argument("--channel", type=int, default=0, help="RTT channel number")
+    parser.add_argument("--elf", "-e", default=DEFAULT_ELF, help="ELF file path")
+    parser.add_argument("--output", "-o", help="Output file path")
+    parser.add_argument("--format", "-f", choices=["csv", "json", "summary"], default="csv", help="Output format")
+    parser.add_argument("--gdb-port", type=int, default=DEFAULT_GDB_PORT, help="J-Link GDB Server port")
+    parser.add_argument("--seq-symbol", default="g_local_probe_seq", help="Sequence symbol used by pointer mode")
+    parser.add_argument("--max-retries", type=int, default=5, help="Retries per sample in pointer mode")
+    return parser
+
+
+def validate_args(args: argparse.Namespace) -> argparse.Namespace:
+    if args.mode == "symbol":
+        args.workflow_mode = "symbol"
+    elif args.mode == "symbol-auto":
+        args.workflow_mode = "symbol_auto"
+    else:
+        args.workflow_mode = "legacy"
+    args.effective_capture_mode = args.capture_mode if args.workflow_mode in {"symbol", "symbol_auto"} else args.mode
+
+    if args.decode_profile and args.layout:
+        raise ValueError("--decode-profile and --layout are mutually exclusive")
+
+    if args.follow_pointer and not args.pointer_array:
+        raise ValueError("--follow-pointer requires --pointer-array")
+
+    if args.workflow_mode == "symbol":
+        if not args.symbol:
+            raise ValueError("--symbol is required when --mode symbol is used")
+        if args.variable or args.address or args.pointer_symbol or args.rtt:
+            raise ValueError("--mode symbol cannot be combined with legacy capture sources")
+        if args.effective_capture_mode != "snapshot":
+            raise ValueError("symbol mode currently supports only --capture-mode snapshot")
+        if args.count <= 0:
+            raise ValueError("--count must be greater than 0")
+        if args.follow_pointer and not args.decode_profile:
+            raise ValueError("--follow-pointer requires --decode-profile")
+        if args.format == "summary" and args.decode_profile is None and not args.pointer_array:
+            raise ValueError("--format summary requires --decode-profile or --pointer-array in symbol mode")
+
+    if args.workflow_mode == "symbol_auto":
+        if not args.symbol:
+            raise ValueError("--symbol is required when --mode symbol-auto is used")
+        if args.variable or args.address or args.pointer_symbol or args.rtt:
+            raise ValueError("--mode symbol-auto cannot be combined with legacy capture sources")
+        if args.effective_capture_mode != "snapshot":
+            raise ValueError("symbol-auto currently supports only --capture-mode snapshot")
+        if args.decode_profile or args.layout or args.pointer_array or args.follow_pointer:
+            raise ValueError("symbol-auto does not accept manual decode options")
+        if args.follow_depth < 0:
+            raise ValueError("--follow-depth must be greater than or equal to 0")
+
+    return args
+
+
 def build_metadata(
     *,
     args: argparse.Namespace,
@@ -759,55 +1262,106 @@ def build_metadata(
     if getattr(args, "pointer_symbol", None):
         metadata["pointer_symbol"] = args.pointer_symbol
         metadata["seq_symbol"] = args.seq_symbol
+    if getattr(args, "decode_profile", None):
+        metadata["decode_profile"] = args.decode_profile
+    if getattr(args, "symbol", None):
+        metadata["symbol_mode"] = True
+    if getattr(args, "workflow_mode", None) == "symbol_auto":
+        metadata["follow_depth"] = args.follow_depth
+    if hasattr(args, "effective_capture_mode"):
+        metadata["capture_mode"] = args.effective_capture_mode
     if args.elf:
         metadata["elf"] = args.elf
     return metadata
 
 
+def capture_symbol_rows(acq: DataAcquisition, args: argparse.Namespace, symbol_name: str, symbol_address: int) -> List[Dict[str, Any]]:
+    registry = get_decode_profile_registry()
+
+    if args.pointer_array:
+        pointer_layout = parse_layout(f"u32x{args.count}")
+        pointer_values = [int(value) for value in acq.read_snapshot_layout(symbol_address, pointer_layout)]
+        pointer_rows = decode_u32_ptr_array_entries(symbol_name, symbol_address, pointer_values)
+        if not args.follow_pointer:
+            return pointer_rows
+
+        profile = registry[args.decode_profile]
+        decoded_rows: List[Dict[str, Any]] = []
+        for pointer_row, pointer_value in zip(pointer_rows, pointer_values):
+            row: Dict[str, Any] = dict(pointer_row)
+            if pointer_value == 0:
+                row["decode_status"] = "null_pointer"
+                decoded_rows.append(row)
+                continue
+            if not is_valid_sram_pointer(pointer_value):
+                row["decode_status"] = "pointer_out_of_sram"
+                decoded_rows.append(row)
+                continue
+
+            raw = acq.read_snapshot_block(pointer_value, profile.size)
+            decoded = profile.decoder(
+                raw,
+                symbol=symbol_name,
+                instance_pointer=pointer_value,
+                index=pointer_row["index"],
+            )
+            decoded["pointer_value"] = pointer_row["pointer_value"]
+            decoded["is_null"] = pointer_row["is_null"]
+            decoded["is_sram_pointer"] = pointer_row["is_sram_pointer"]
+            decoded_rows.append(decoded)
+        return decoded_rows
+
+    if args.decode_profile:
+        profile = registry[args.decode_profile]
+        rows: List[Dict[str, Any]] = []
+        for index in range(args.count):
+            base_address = symbol_address + (index * profile.size)
+            raw = acq.read_snapshot_block(base_address, profile.size)
+            if args.decode_profile == "dji_motor_instance_measure":
+                rows.append(
+                    profile.decoder(
+                        raw,
+                        symbol=symbol_name,
+                        instance_pointer=base_address,
+                        index=index,
+                    )
+                )
+            else:
+                rows.append(
+                    profile.decoder(
+                        raw,
+                        symbol=symbol_name,
+                        base_address=base_address,
+                        index=index,
+                    )
+                )
+        return rows
+
+    if args.layout:
+        layout = parse_layout(args.layout)
+        values = acq.read_snapshot_layout(symbol_address, layout)
+        return [
+            {
+                "index": index,
+                "symbol": symbol_name,
+                "base_address": format_hex32(symbol_address + (index * layout.element_size)),
+                "value": value,
+            }
+            for index, value in enumerate(values)
+        ]
+
+    raise ValueError("symbol mode requires --decode-profile, --layout, or --pointer-array")
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="STM32 Data Acquisition Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s --variable g_sensorData --layout f32x3 --count 200 --mode nonstop
-  %(prog)s --address 0x20000000 --layout u32x4 --count 50 --mode snapshot
-  %(prog)s --address 0x20001000 --size 64 --count 10 --mode snapshot
-        """,
-    )
-
-    parser.add_argument("--device", "-d", default=DEFAULT_DEVICE, help=f"Target device (default: {DEFAULT_DEVICE})")
-    parser.add_argument(
-        "--interface",
-        "-i",
-        default=DEFAULT_INTERFACE,
-        choices=["SWD", "JTAG"],
-        help="Debug interface",
-    )
-    parser.add_argument("--speed", "-s", type=int, default=DEFAULT_SPEED, help="Interface speed in kHz")
-
-    source_group = parser.add_mutually_exclusive_group()
-    source_group.add_argument("--variable", "-v", help="Variable name to monitor")
-    source_group.add_argument("--address", "-a", help="Memory address (hex)")
-    source_group.add_argument("--pointer-symbol", help="Symbol that stores a runtime target address")
-    source_group.add_argument("--rtt", action="store_true", help="Generate RTT capture helper script")
-
-    parser.add_argument("--mode", choices=["nonstop", "snapshot"], default="nonstop", help="Capture mode")
-    parser.add_argument("--layout", help="Typed layout, e.g. u32x1, s16x8, f32x3")
-    parser.add_argument("--size", type=int, default=4, help="Raw memory block size in bytes")
-    parser.add_argument("--count", "-c", type=int, default=100, help="Number of samples")
-    parser.add_argument("--rate", "-r", type=int, default=1000, help="Sample rate in Hz")
-    parser.add_argument("--interval-ms", type=int, help="Sample interval in ms")
-    parser.add_argument("--interval", type=int, help="Legacy alias for interval-ms")
-    parser.add_argument("--channel", type=int, default=0, help="RTT channel number")
-    parser.add_argument("--elf", "-e", default=DEFAULT_ELF, help="ELF file path")
-    parser.add_argument("--output", "-o", help="Output file path")
-    parser.add_argument("--format", "-f", choices=["csv", "json"], default="csv", help="Output format")
-    parser.add_argument("--gdb-port", type=int, default=DEFAULT_GDB_PORT, help="J-Link GDB Server port")
-    parser.add_argument("--seq-symbol", default="g_local_probe_seq", help="Sequence symbol used by pointer mode")
-    parser.add_argument("--max-retries", type=int, default=5, help="Retries per sample in pointer mode")
-
+    parser = create_parser()
     args = parser.parse_args()
+    try:
+        validate_args(args)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
     interval_ms = resolve_interval_ms(args)
     acq = DataAcquisition(args.device, args.interface, args.speed)
 
@@ -821,6 +1375,9 @@ Examples:
     elf_file = args.elf or acq.find_elf_file()
     pointer_symbol_addr: Optional[int] = None
     seq_symbol_addr: Optional[int] = None
+    symbol_auto_root_type_ref: Optional[str] = None
+    symbol_auto_type_schemas: Optional[Dict[str, Any]] = None
+    symbol_auto_cache_status: Optional[str] = None
     if args.variable:
         if not elf_file:
             print("Error: no ELF file found for symbol resolution", file=sys.stderr)
@@ -857,6 +1414,40 @@ Examples:
             return 1
         address = pointer_symbol_addr
         symbol_name = args.pointer_symbol
+    elif args.workflow_mode == "symbol":
+        if not elf_file:
+            print("Error: no ELF file found for symbol resolution", file=sys.stderr)
+            return 1
+        if not acq.load_symbols(elf_file):
+            print(f"Error: failed to load symbols from {elf_file}", file=sys.stderr)
+            return 1
+        address = acq.get_symbol_address(args.symbol)
+        if address is None:
+            print(f"Error: symbol '{args.symbol}' not found in {elf_file}", file=sys.stderr)
+            return 1
+        symbol_name = args.symbol
+    elif args.workflow_mode == "symbol_auto":
+        if not elf_file:
+            print("Error: no ELF file found for symbol-auto resolution", file=sys.stderr)
+            return 1
+        try:
+            cache_root = default_dwarf_cache_root()
+            symbol_schema, symbol_auto_type_schemas, symbol_auto_cache_status = resolve_symbol_auto_schema(
+                cache_root=cache_root,
+                elf_path=Path(elf_file),
+                symbol_name=args.symbol,
+            )
+        except (RuntimeError, ValueError, OSError, ImportError, KeyError) as exc:
+            print(f"Error: symbol-auto reflection failed: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            address = int(symbol_schema.address, 16)
+        except ValueError:
+            print(f"Error: invalid cached symbol address '{symbol_schema.address}'", file=sys.stderr)
+            return 1
+        symbol_name = symbol_schema.symbol
+        symbol_auto_root_type_ref = symbol_schema.root_type_ref
     else:
         parser.print_help()
         return 1
@@ -873,15 +1464,34 @@ Examples:
         return 1
 
     output_prefix = "data_acq"
+    if args.workflow_mode == "symbol":
+        output_prefix = "symbol_acq"
+    elif args.workflow_mode == "symbol_auto":
+        output_prefix = "symbol_auto_acq"
     output_path = ensure_output_path(args.output, args.format, output_prefix)
 
-    print(f"Capture mode: {args.mode}")
+    print(f"Mode: {args.mode}")
     print(f"Target: {args.device} {args.interface}@{args.speed}kHz")
     print(f"Address: 0x{address:08X}")
     if symbol_name:
         print(f"Symbol: {symbol_name}")
     if args.pointer_symbol:
         print(f"Sequence symbol: {args.seq_symbol}")
+    if args.workflow_mode == "symbol":
+        print(f"Underlying capture mode: {args.effective_capture_mode}")
+        if args.pointer_array:
+            print("Pointer array: enabled")
+        if args.follow_pointer:
+            print("Follow pointer: enabled")
+        if args.decode_profile:
+            print(f"Decode profile: {args.decode_profile}")
+    elif args.workflow_mode == "symbol_auto":
+        print(f"Underlying capture mode: {args.effective_capture_mode}")
+        print(f"Follow depth: {args.follow_depth}")
+        if symbol_auto_root_type_ref is not None:
+            print(f"Root type: {symbol_auto_root_type_ref}")
+        if symbol_auto_cache_status is not None:
+            print(f"Schema cache: {symbol_auto_cache_status}")
     if layout is not None:
         print(f"Layout: {layout.element_type}x{layout.count}")
     else:
@@ -889,7 +1499,20 @@ Examples:
     print(f"Samples: {args.count}, interval: {interval_ms} ms")
 
     try:
-        if args.pointer_symbol:
+        if args.workflow_mode == "symbol":
+            samples = capture_symbol_rows(acq, args, symbol_name, address)
+        elif args.workflow_mode == "symbol_auto":
+            assert symbol_auto_root_type_ref is not None
+            assert symbol_auto_type_schemas is not None
+            samples = capture_symbol_auto_rows(
+                acq,
+                symbol_name=symbol_name,
+                symbol_address=address,
+                root_type_ref=symbol_auto_root_type_ref,
+                type_schemas=symbol_auto_type_schemas,
+                follow_depth=args.follow_depth,
+            )
+        elif args.pointer_symbol:
             assert layout is not None
             assert pointer_symbol_addr is not None
             assert seq_symbol_addr is not None
@@ -940,14 +1563,37 @@ Examples:
         layout=layout,
         interval_ms=interval_ms,
     )
+    if symbol_auto_root_type_ref is not None:
+        metadata["root_type_ref"] = symbol_auto_root_type_ref
+    if symbol_auto_cache_status is not None:
+        metadata["schema_cache"] = symbol_auto_cache_status
 
-    if args.format == "csv":
-        if layout is not None:
-            write_samples_csv(output_path, samples, layout.count)
+    if args.workflow_mode == "symbol":
+        if args.format == "csv":
+            write_rows_csv(output_path, samples)
+        elif args.format == "json":
+            write_json(output_path, metadata, samples)
         else:
-            write_memory_csv(output_path, samples)
+            write_summary(output_path, build_symbol_summary(metadata, samples))
+    elif args.workflow_mode == "symbol_auto":
+        if args.format == "csv":
+            write_rows_csv(output_path, samples)
+        elif args.format == "json":
+            write_json(output_path, metadata, samples)
+        else:
+            dwarf_decode = load_local_module("dwarf_decode")
+            write_summary(output_path, dwarf_decode.build_generic_summary(samples))
     else:
-        write_json(output_path, metadata, samples)
+        if args.format == "csv":
+            if layout is not None:
+                write_samples_csv(output_path, samples, layout.count)
+            else:
+                write_memory_csv(output_path, samples)
+        elif args.format == "json":
+            write_json(output_path, metadata, samples)
+        else:
+            print("Error: --format summary is supported only in --mode symbol", file=sys.stderr)
+            return 1
 
     print(f"Data saved to: {output_path}")
     print(f"Total samples: {len(samples)}")

@@ -29,12 +29,12 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
 
 ```bash
 # 1) Project standard flash flow
-./build_tools/jlink/flash.sh | tee logs/flash/flash_$(date +%Y%m%d_%H%M%S).log
+bash ./build_tools/jlink/flash.sh | tee logs/flash/flash_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ```bash
 # 2) Optional build-dir override
-./build_tools/jlink/flash.sh builds/gcc/debug | tee logs/flash/flash_builddir_$(date +%Y%m%d_%H%M%S).log
+bash ./build_tools/jlink/flash.sh builds/gcc/debug | tee logs/flash/flash_builddir_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ```bash
@@ -58,6 +58,7 @@ python3 ./.codex/skills/bfd-flash-programmer/scripts/jlink_flash.py \
 - Save final flash logs under `logs/flash/`.
 - Always run verification after programming.
 - Do not erase before confirming exact device model.
+- If `./build_tools/jlink/flash.sh` returns `Permission denied`, rerun it via `bash ./build_tools/jlink/flash.sh` instead of assuming probe or flash tool failure.
 
 ## Scripts
 
