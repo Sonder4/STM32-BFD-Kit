@@ -118,13 +118,20 @@
     - BFD-Kit/skills/codex/bfd-data-acquisition/SKILL.md
     - BFD-Kit/skills/claude/bfd-data-acquisition/SKILL.md
 
-- id: learning-20260314-bfd-doc-sanitization
+- id: learning-20260313-host-send-vs-mcu-receive-must-be-separated-during-hss-motion-test
   category: best_practice
-  area: docs
-  status: promoted
-  summary: 面向项目使用者的 BFD-Kit 文档与代理提示词应保持通用维护表述，不暴露本地绝对路径、工作区拓扑、镜像关系或仓库发布边界；内部真源规则只保留在工作区级 AGENTS 文档。
-  promoted_to:
-    - BFD-Kit/README.md
-    - BFD-Kit/README-zh.md
-    - BFD-Kit/STM32_AGENT_PROMPT-zh.md
-    - BFD-Kit/MAINTENANCE-zh.md
+  area: debug
+  status: resolved
+  summary: 在 HSS 联合运动测试中，必须分开验证“主机侧已发送 `/cmd_vel`”和“MCU 侧 `g_chassis_ctrl` 已更新”；应同时保留主机 `mcu_comm_node` 发送日志与 MCU RAM/HSS 采样，避免把链路问题误判为底盘速度误差。
+
+- id: learning-20260313-hss-cycle-timing-can-expose-control-period-mismatch
+  category: best_practice
+  area: debug
+  status: resolved
+  summary: 对底盘速度误差做 HSS 联调时，应同时采样 `Target_speed`、`Chassis_Set.Linear_velocity`、`FK.Linear_velocity_X` 与轮速，并根据目标阶段持续时间反推真实控制节拍；若活动段平均速度偏低而稳态接近正常，优先检查速度规划器内部的固定 `CONTROL_PERIOD` 是否与实际调用周期失配。
+
+- id: learning-20260314-chassis-selftest-must-be-disabled-for-link-validation
+  category: best_practice
+  area: workflow
+  status: resolved
+  summary: 做底盘静止、ROS2 控制链路、里程计或运动学验证前，必须先确认 `CHASSIS_SELFTEST_ENABLE=0`；否则固件会在底盘主循环内周期性注入自检速度指令，现象会表现为“间歇自走”或上位机控制结果被污染。

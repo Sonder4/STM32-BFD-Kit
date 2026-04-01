@@ -46,3 +46,8 @@
   area: scripts
   status: resolved
   summary: 原生 HSS 能力最初只存在于外部 `CLI-Anything` 仓库，导致 BFD-Kit skill 文档能引用但目标项目无法直接分发使用；现已将 HSS CLI、运行时安装脚本和 skill 入口完整收敛到 BFD-Kit。
+
+- id: error-20260313-ros2-duplicate-mcu-comm-node-pollutes-chassis-check
+  area: workflow
+  status: resolved
+  summary: 同时运行两个同名 `mcu_comm_node` 会让 `/odom` 与 `/cmd_vel` 诊断结果失真；底盘联调前必须先清理重复节点，只保留实际占用目标串口的单实例。
