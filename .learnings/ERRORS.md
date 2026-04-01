@@ -51,3 +51,13 @@
   area: workflow
   status: resolved
   summary: 同时运行两个同名 `mcu_comm_node` 会让 `/odom` 与 `/cmd_vel` 诊断结果失真；底盘联调前必须先清理重复节点，只保留实际占用目标串口的单实例。
+
+- id: error-20260401-bfd-kit-rtt-surface-assumed-jlink-only
+  area: docs
+  status: resolved
+  summary: BFD-Kit 文档和 RTT skill 以前默认把 RTT 工作流写成 J-Link 专属，导致只接 ST-Link 的用户虽然能烧录，却没有可用的 BFD-Kit RTT 入口；现已补充基于 `STM32_Programmer_CLI` 的轮询式 ST-Link RTT 路径，并明确 probe 能力边界。
+
+- id: error-20260401-stlink-programmer-cli-uses-freq-not-speed
+  area: scripts
+  status: resolved
+  summary: `STM32_Programmer_CLI` 的 SWD 连接参数应使用 `freq=<kHz>` 而不是 `speed=<kHz>`；误用 `speed=` 会直接触发 `Wrong connect parameter` 并导致 ST-Link RTT backend 无法连接。

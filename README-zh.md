@@ -8,6 +8,7 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 ## 项目说明
 
 - 本项目借助 [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) 对 J-Link 相关流程进行了 CLI 化处理。
+- 当前版本已明确区分 probe 能力边界：ST-Link 支持烧录和 RTT 轮询，但不提供与 J-Link HSS 对等的能力。
 - 当前版本在 Ubuntu 22.04 下使用最佳。
 - Windows 版本尚未完成移植。
 
@@ -26,6 +27,7 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 - `BFD-Kit/resources/stm32/templates/`：芯片族模板（`f4/`、`h7/`）
 - `BFD-Kit/init_project.sh`：一键项目接入入口
 - `BFD-Kit/scripts/bfd_jlink_hss.sh`：带本地运行时的原生 J-Link HSS 包装入口
+- `BFD-Kit/scripts/bfd_stlink_rtt.py`：基于 `STM32_Programmer_CLI` 的轮询式 ST-Link RTT 抓取入口
 - `BFD-Kit/.runtime/venv`：按需安装的本地 Python 运行时
 - `BFD-Kit/scripts/migrate_bfd_skills.py`：技能导入/回灌脚本
 - `BFD-Kit/MAINTENANCE-zh.md`：维护者维护清单
@@ -37,6 +39,8 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 - `bfd-cubemx-codegen`：基于现有 `.ioc` 只读重新生成 CubeMX 工程代码
 - `bfd-flash-programmer`：稳定的 J-Link/ST-Link 烧录流程
 - `bfd-rtt-logger`：RTT 运行日志采集
+- `bfd-stlink-interface`：ST-Link 专用的烧录、内存访问与 GDB server 使用说明
+- `bfd-strtt-rtt`：参考 `strtt` 路线的轮询式 ST-Link RTT 工作流
 - `bfd-debug-interface`：结构化调试流程与故障上下文处理
 - `bfd-debug-executor`：一次性 J-Link 命令执行
 - `bfd-register-capture`：外设寄存器采样与导出
@@ -57,6 +61,23 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 - DWARF schema 会缓存到 `.codex/bfd/dwarf_cache/`，便于重复采样复用
 - RTT 无有效 payload 时，标准流程明确切换到 RAM 采样，而不是临时拼接 GDB/J-Link 命令
 - `bfd-debug-interface` 与 `bfd-rtt-logger` 已把结构化符号解码默认委托给 `bfd-data-acquisition`
+- `bfd-rtt-logger` 新增基于 `STM32_Programmer_CLI` 的 ST-Link RTT 轮询路径
+- probe 能力边界已显式写清：ST-Link 支持 RTT，但当前没有 HSS 等价路径
+
+## Probe 能力边界
+
+- J-Link：
+  - 烧录
+  - RTT quick/dual
+  - 原生 HSS 标量采样
+  - 一次性 J-Link 命令执行
+- ST-Link：
+  - 烧录
+  - 通过 `STM32_Programmer_CLI` 的内存读写
+  - 通过 `BFD-Kit/scripts/bfd_stlink_rtt.py` 的轮询式 RTT 抓取
+  - 当前版本没有 HSS 等价路径
+
+`ST-Link` 与 `strtt` 风格 RTT 现在通过独立 skills 承载，不再混入 J-Link 专属 skills。
 
 当前 V1 自动反射支持：
 
@@ -95,9 +116,18 @@ python3 ./.codex/skills/bfd-cubemx-codegen/scripts/generate_from_ioc.py --projec
 
 # 2) 烧录
 ./build_tools/jlink/flash.sh builds/gcc/debug | tee logs/flash/flash_$(date +%Y%m%d_%H%M%S).log
+# 或
+python3 BFD-Kit/skills/codex/bfd-flash-programmer/scripts/stlink_flash.py \
+  --firmware "${STM32_HEX}"
 
 # 3) RTT 日志
 ./build_tools/jlink/rtt.sh logs/rtt/rtt_$(date +%Y%m%d_%H%M%S).log 5 --mode quick
+# 或者，当 STM32_PROBE=stlink 时
+python3 BFD-Kit/scripts/bfd_stlink_rtt.py \
+  --elf "${STM32_ELF}" \
+  --role boot \
+  --duration 5 \
+  --output logs/rtt/stlink_rtt_$(date +%Y%m%d_%H%M%S).log
 
 # 3.5) 若 RTT 没有有效 payload，则切换到通用 RAM 解码
 python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
@@ -158,6 +188,7 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
 ```
 
 对 `J-Link PLUS`，SEGGER 官方型号限制和本地 HSS 实测都表明上限是 10 个 symbol。不要把 `hss inspect` 返回的原始 capability 第 3 个 word 当作 symbol 数量上限。`hss sample` 会把同步宽表 CSV 写到 `--output`，并额外生成 `--output.meta.json` 元数据文件。
+这条 HSS 路径仍然只适用于 J-Link；当前版本的 ST-Link 后端不提供对等的高速原生采样能力。
 
 ## 运行配置约定
 

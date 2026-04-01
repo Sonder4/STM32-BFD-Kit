@@ -17,3 +17,7 @@
 - id: feature-20260313-jlink-hss-multi-block-decode
   status: promoted
   summary: 为原生 J-Link HSS 路径补齐多 block 描述结构解析、multi-symbol 同步采样和更准确的 capability 字段语义，避免第一版仅限单个固定地址标量。
+
+- id: feature-20260401-stlink-snapshot-sampling-backend
+  status: pending
+  summary: 为 ST-Link 增加面向固定地址标量和小型结构体的 snapshot/polling 采样后端，复用 `STM32_Programmer_CLI` 或 ST-LINK server，而不是误称其为 HSS。

@@ -83,6 +83,10 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
 
 This path is limited to fixed-address scalar globals/statics. Repeat `--symbol` for multi-symbol sampling. On `J-Link PLUS`, SEGGER's model limits and local HSS verification both indicate a 10-symbol ceiling; do not treat `hss inspect` raw capability word 2 as the symbol-count limit. The wrapper uses `BFD-Kit/.runtime/venv` automatically after `bash BFD-Kit/init_project.sh --project-root .`. The command writes a wide CSV to `--output` and a metadata sidecar JSON to `--output.meta.json`.
 
+ST-Link does not provide an HSS-equivalent path in this revision. If `STM32_PROBE=stlink`, treat high-rate capture as a separate polling/snapshot design problem instead of a drop-in replacement for native J-Link HSS.
+
+If the requirement is textual RTT evidence over ST-Link, switch to the independent `bfd-strtt-rtt` skill instead of forcing that flow through J-Link RTT guidance.
+
 ## Scripts
 
 - `.codex/skills/bfd-data-acquisition/scripts/data_acq.py`

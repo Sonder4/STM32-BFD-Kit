@@ -118,6 +118,38 @@
     - BFD-Kit/skills/codex/bfd-data-acquisition/SKILL.md
     - BFD-Kit/skills/claude/bfd-data-acquisition/SKILL.md
 
+- id: learning-20260401-stlink-rtt-is-memory-polling-not-native-hss
+  category: best_practice
+  area: debug
+  status: promoted
+  summary: ST-Link 侧的 SEGGER RTT 支持应按“SWD memory read/write + RTT control block 扫描 + ring buffer 轮询”来设计；它不是 J-Link HSS 的等价物，文档和技能必须明确区分两者的能力边界。
+  promoted_to:
+    - BFD-Kit/scripts/bfd_stlink_rtt.py
+    - BFD-Kit/scripts/bfd_stlink_rtt_core/programmer_cli.py
+    - BFD-Kit/scripts/bfd_stlink_rtt_core/rtt_layout.py
+    - BFD-Kit/scripts/bfd_stlink_rtt_core/rtt_poll.py
+    - BFD-Kit/scripts/tests/test_bfd_stlink_rtt_core.py
+    - BFD-Kit/scripts/tests/test_bfd_stlink_rtt_cli.py
+    - BFD-Kit/README.md
+    - BFD-Kit/README-zh.md
+    - BFD-Kit/README-en.md
+    - BFD-Kit/STM32_AGENT_PROMPT-zh.md
+    - BFD-Kit/skills/codex/bfd-rtt-logger/SKILL.md
+    - BFD-Kit/skills/claude/bfd-rtt-logger/SKILL.md
+    - BFD-Kit/skills/codex/bfd-data-acquisition/SKILL.md
+    - BFD-Kit/skills/claude/bfd-data-acquisition/SKILL.md
+    - BFD-Kit/skills/codex/bfd-debug-interface/SKILL.md
+    - BFD-Kit/skills/claude/bfd-debug-interface/SKILL.md
+
+- id: learning-20260401-stlink-rtt-text-should-strip-nul-padding
+  category: best_practice
+  area: debug
+  status: promoted
+  summary: 对文本型 ST-Link RTT 轮询结果，应在写日志前剔除 `\\x00` 填充字节；否则 boot 通道会被未使用 buffer 区域的零字节污染，影响运行证据可读性。
+  promoted_to:
+    - BFD-Kit/scripts/bfd_stlink_rtt.py
+    - BFD-Kit/scripts/tests/test_bfd_stlink_rtt_cli.py
+
 - id: learning-20260313-host-send-vs-mcu-receive-must-be-separated-during-hss-motion-test
   category: best_practice
   area: debug

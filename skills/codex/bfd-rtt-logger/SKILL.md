@@ -1,6 +1,6 @@
 ---
 name: bfd-rtt-logger
-description: Use when capturing STM32 RTT output, validating runtime behavior after flash/reset, or collecting short runtime evidence from J-Link RTT channels.
+description: Use when capturing STM32 RTT output through the current J-Link mainline, validating runtime behavior after flash/reset, or collecting short runtime evidence from J-Link RTT channels.
 ---
 
 # BFD RTT Logger
@@ -17,8 +17,9 @@ Use this skill to capture RTT logs with profile-driven defaults.
 ## Quick Start
 
 1. Run bootstrap profile first.
-2. Use `quick` mode for routine runtime checks.
-3. Use `dual` mode after reset/reconnect flows.
+2. Use J-Link `quick` mode for routine runtime checks.
+3. Use `dual` mode only after reset/reconnect flows on J-Link.
+4. If the active probe is ST-Link, switch to `bfd-strtt-rtt` instead of this skill.
 
 ## Core Commands
 
@@ -49,9 +50,18 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
 
 1. Run bootstrap and verify profile env.
 2. Confirm RTT symbol/address.
-3. Capture with `quick` or `dual`.
+3. Capture with J-Link `quick` or `dual`.
 4. Archive logs and extract key evidence lines.
-5. If `quick` mode reports `fallback_no_payload`, `RTT_SUCCESS=0`, or `RTT Control Block not found`, stop RTT-based judgment and switch to standardized RAM sampling.
+5. If RTT reports `fallback_no_payload`, `RTT_SUCCESS=0`, or `RTT Control Block not found`, stop RTT-based judgment and switch to standardized RAM sampling.
+
+## Probe Capability Boundary
+
+- J-Link:
+  - supports `quick` and `dual`
+  - supports native HSS escalation
+- ST-Link:
+  - use the independent `bfd-strtt-rtt` skill
+  - does not use this J-Link mainline RTT path
 
 ## Mandatory Fallback: RTT Failure to RAM Sampling
 

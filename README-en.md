@@ -10,6 +10,7 @@ It standardizes `.ioc` discovery, runtime profile generation, code regeneration,
 This project contains STM32 Skills developed by NCU Roboteam during work with the DJI Type-A board and the DM MC-02 development board. There is still plenty of room for improvement, and issues are welcome.
 
 - This project also leverages [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) to handle J-Link related workflows through a CLI-first path.
+- Probe capability boundaries are explicit in this revision: ST-Link supports flash and polling-based RTT, but does not provide a native HSS-equivalent path.
 - The toolkit currently works best on Ubuntu 22.04.
 - Windows support has not been ported yet.
 
@@ -28,6 +29,7 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - `resources/stm32/templates/`: family templates (`f4/`, `h7/`)
 - `init_project.sh`: one-command project onboarding entry
 - `scripts/bfd_jlink_hss.sh`: native J-Link HSS wrapper with managed local Python runtime
+- `scripts/bfd_stlink_rtt.py`: polling-based ST-Link RTT capture built on `STM32_Programmer_CLI`
 - `.runtime/venv`: local Python runtime installed on demand
 - `scripts/migrate_bfd_skills.py`: import / cutover utility
 - `STM32_AGENT_PROMPT-zh.md`: Chinese STM32 agent prompt reference
@@ -39,6 +41,8 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - `bfd-cubemx-codegen`: regenerate CubeMX-managed files from an existing `.ioc` in read-only generation mode
 - `bfd-flash-programmer`: deterministic J-Link / ST-Link flash flow
 - `bfd-rtt-logger`: runtime RTT capture and validation
+- `bfd-stlink-interface`: ST-Link-only flash, memory, and GDB-server usage
+- `bfd-strtt-rtt`: polling-based ST-Link RTT workflow modeled after `strtt`
 - `bfd-debug-interface`: structured debug workflow and fault context handling
 - `bfd-debug-executor`: one-shot J-Link command execution
 - `bfd-register-capture`: peripheral register sampling and export
@@ -46,6 +50,21 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - `bfd-fault-logger`: HardFault / BusFault / UsageFault archival
 - `bfd-debug-orchestrator`: end-to-end debug campaign orchestration
 - `bfd-user-feedback`: user-facing status and feedback hooks
+
+## Probe Capability Boundaries
+
+- J-Link:
+  - flash
+  - RTT quick/dual
+  - native HSS scalar sampling
+  - one-shot J-Link command execution
+- ST-Link:
+  - flash
+  - memory read/write through `STM32_Programmer_CLI`
+  - polling-based RTT capture through `scripts/bfd_stlink_rtt.py`
+  - no HSS-equivalent path in this revision
+
+ST-Link usage and `strtt`-style RTT polling are now intended to live in dedicated skills rather than inside J-Link-only skills.
 
 ## Fast Init
 
@@ -74,9 +93,18 @@ python3 ./.codex/skills/bfd-cubemx-codegen/scripts/generate_from_ioc.py --projec
 
 # 2) Flash
 ./build_tools/jlink/flash.sh builds/gcc/debug | tee logs/flash/flash_$(date +%Y%m%d_%H%M%S).log
+# or
+python3 BFD-Kit/skills/codex/bfd-flash-programmer/scripts/stlink_flash.py \
+  --firmware "${STM32_HEX}"
 
 # 3) RTT runtime log
 ./build_tools/jlink/rtt.sh logs/rtt/rtt_$(date +%Y%m%d_%H%M%S).log 5 --mode quick
+# or, when STM32_PROBE=stlink
+python3 BFD-Kit/scripts/bfd_stlink_rtt.py \
+  --elf "${STM32_ELF}" \
+  --role boot \
+  --duration 5 \
+  --output logs/rtt/stlink_rtt_$(date +%Y%m%d_%H%M%S).log
 
 # 3.5) Native HSS for high-rate, non-halting scalar sampling
 bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
@@ -91,6 +119,7 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
 ```
 
 On `J-Link PLUS`, SEGGER's model limits and local HSS verification both indicate a 10-symbol ceiling. Do not treat `hss inspect` raw capability word 2 as the symbol-count limit. The native sampler writes a synchronized wide CSV to `--output` and a metadata sidecar JSON to `--output.meta.json`.
+This HSS path remains J-Link-only. The ST-Link backend in this revision does not provide an equivalent native high-rate sampler.
 
 ## Runtime Profile Contract
 

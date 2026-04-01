@@ -23,6 +23,8 @@
 - `bash BFD-Kit/init_project.sh --project-root .`
 - `command -v JLinkExe`
 - `command -v JLinkRTTLogger`
+- `command -v STM32_Programmer_CLI`
+- `command -v ST-LINK_gdbserver`
 - `command -v arm-none-eabi-gdb`
 - `python3 ./.codex/skills/bfd-project-init/scripts/ensure_profile.py --project-root . --print-env-path`
 
@@ -38,6 +40,13 @@
 
 - `./build_tools/jlink/rtt.sh logs/rtt/rtt_$(date +%Y%m%d_%H%M%S).log 5 --mode quick`
 - `./build_tools/jlink/rtt.sh logs/rtt/rtt_dual_$(date +%Y%m%d_%H%M%S).log 6 --mode dual --reset-policy gdb-reset-go`
+- 当 `STM32_PROBE=stlink` 时：
+  - `python3 BFD-Kit/scripts/bfd_stlink_rtt.py --elf "${STM32_ELF}" --role boot --duration 5 --output logs/rtt/stlink_rtt_$(date +%Y%m%d_%H%M%S).log`
+
+### D.1 Probe 能力边界
+
+- `J-Link`：支持 quick/dual RTT 与原生 HSS。
+- `ST-Link`：当前支持烧录、GDB 与轮询式 RTT，不支持 HSS 等价路径。
 
 ### D.5 RTT 无 payload 时的默认 RAM 解码路径
 
@@ -54,6 +63,8 @@
 - CubeMX 代码刷新：`bfd-cubemx-codegen`
 - 烧录：`bfd-flash-programmer`
 - RTT：`bfd-rtt-logger`
+- ST-Link 接口：`bfd-stlink-interface`
+- ST-Link RTT：`bfd-strtt-rtt`
 - 调试接口：`bfd-debug-interface`
 - 一次性调试执行：`bfd-debug-executor`
 - 寄存器采样：`bfd-register-capture`

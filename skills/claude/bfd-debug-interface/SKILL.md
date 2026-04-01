@@ -38,8 +38,15 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
 | Tool | Rule |
 |------|------|
 | J-Link | Resolve from `PATH` (`JLinkExe`, `JLinkGDBServerCLExe`) |
-| ST-Link | Resolve from `PATH` (`ST-LINK_gdbserver`) |
+| ST-Link | Resolve from `PATH` (`STM32_Programmer_CLI`, `ST-LINK_gdbserver`) |
 | SVD Files | Resolve from `STM32_SVD` in bootstrap profile |
+
+RTT note:
+
+- J-Link RTT capture uses the existing `build_tools/jlink/rtt.sh` flow.
+- ST-Link-specific debug and memory control should use the independent `bfd-stlink-interface` skill.
+- ST-Link RTT capture should use the independent `bfd-strtt-rtt` skill.
+- Native HSS remains J-Link-only.
 
 ## Quick Session (5 Steps)
 

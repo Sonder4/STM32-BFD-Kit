@@ -14,6 +14,8 @@ BFD_SKILLS = [
     'bfd-project-init',
     'bfd-flash-programmer',
     'bfd-rtt-logger',
+    'bfd-stlink-interface',
+    'bfd-strtt-rtt',
     'bfd-debug-interface',
     'bfd-debug-executor',
     'bfd-register-capture',

@@ -8,6 +8,7 @@ It standardizes IOC discovery, active profile generation, flashing, RTT logging,
 ## Project Note
 
 - This project leverages [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) to drive CLI-based handling for J-Link related workflows.
+- ST-Link support is split by capability: flash and RTT polling are supported, but there is no ST-Link equivalent of native J-Link HSS in this revision.
 - The toolkit currently works best on Ubuntu 22.04.
 - Windows support has not been ported yet.
 
@@ -26,6 +27,7 @@ It standardizes IOC discovery, active profile generation, flashing, RTT logging,
 - `BFD-Kit/resources/stm32/templates/`: family templates (`f4/`, `h7/`)
 - `BFD-Kit/init_project.sh`: one-command project onboarding entry
 - `BFD-Kit/scripts/bfd_jlink_hss.sh`: native J-Link HSS wrapper with managed Python runtime
+- `BFD-Kit/scripts/bfd_stlink_rtt.py`: polling-based ST-Link RTT capture built on `STM32_Programmer_CLI`
 - `BFD-Kit/.runtime/venv`: local Python runtime installed on demand for portable script execution
 - `BFD-Kit/scripts/migrate_bfd_skills.py`: import/cutover utility
 - `BFD-Kit/MAINTENANCE-zh.md`: maintainer-facing maintenance checklist
@@ -37,6 +39,8 @@ It standardizes IOC discovery, active profile generation, flashing, RTT logging,
 - `bfd-cubemx-codegen`: regenerate CubeMX-managed files from an existing `.ioc` in read-only mode
 - `bfd-flash-programmer`: deterministic J-Link/ST-Link flash flow
 - `bfd-rtt-logger`: runtime RTT capture and validation
+- `bfd-stlink-interface`: ST-Link-only flash, memory, and GDB-server usage
+- `bfd-strtt-rtt`: polling-based ST-Link RTT workflow modeled after `strtt`
 - `bfd-debug-interface`: structured debug workflow and fault context handling
 - `bfd-debug-executor`: one-shot J-Link command execution
 - `bfd-register-capture`: peripheral register sampling/export
@@ -57,6 +61,23 @@ Legacy overlapping STM32 skills are intended to be removed from active mirrors o
 - DWARF schemas are cached under `.codex/bfd/dwarf_cache/` for reuse across repeated inspections
 - RTT failure guidance now explicitly routes to RAM sampling instead of ad-hoc GDB/J-Link command design
 - `bfd-debug-interface` and `bfd-rtt-logger` delegate structured symbol decoding to `bfd-data-acquisition`
+- `bfd-rtt-logger` now includes a polling-based ST-Link RTT path built on `STM32_Programmer_CLI`
+- probe capability boundaries are now explicit: ST-Link RTT is supported, but ST-Link has no HSS-equivalent path in this revision
+
+## Probe Capability Boundaries
+
+- J-Link:
+  - flash
+  - RTT quick/dual
+  - native HSS scalar sampling
+  - one-shot J-Link command execution
+- ST-Link:
+  - flash
+  - memory read/write through `STM32_Programmer_CLI`
+  - polling-based RTT capture through `BFD-Kit/scripts/bfd_stlink_rtt.py`
+  - no HSS-equivalent path in this revision
+
+Keep ST-Link and `strtt`-style RTT usage in these dedicated skills rather than mixing them into J-Link-only skills.
 
 Supported V1 reflected type families:
 
@@ -95,9 +116,18 @@ python3 ./.codex/skills/bfd-cubemx-codegen/scripts/generate_from_ioc.py --projec
 
 # 2) Flash
 ./build_tools/jlink/flash.sh builds/gcc/debug | tee logs/flash/flash_$(date +%Y%m%d_%H%M%S).log
+# or
+python3 BFD-Kit/skills/codex/bfd-flash-programmer/scripts/stlink_flash.py \
+  --firmware "${STM32_HEX}"
 
 # 3) RTT runtime log
 ./build_tools/jlink/rtt.sh logs/rtt/rtt_$(date +%Y%m%d_%H%M%S).log 5 --mode quick
+# or, when STM32_PROBE=stlink
+python3 BFD-Kit/scripts/bfd_stlink_rtt.py \
+  --elf "${STM32_ELF}" \
+  --role boot \
+  --duration 5 \
+  --output logs/rtt/stlink_rtt_$(date +%Y%m%d_%H%M%S).log
 
 # 3.5) If RTT has no usable payload, switch to generic RAM decode
 python3 ./.codex/skills/bfd-data-acquisition/scripts/data_acq.py \
@@ -158,6 +188,7 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
 ```
 
 On `J-Link PLUS`, SEGGER's model limits and local HSS verification both indicate a 10-symbol ceiling. Do not treat `hss inspect` raw capability word 2 as the symbol-count limit. `hss sample` writes a synchronized wide CSV to `--output` and a metadata sidecar JSON to `--output.meta.json`.
+This HSS path remains J-Link-only. The ST-Link backend in this revision does not provide an equivalent high-rate native sampler.
 
 ## Runtime Profile Contract
 
