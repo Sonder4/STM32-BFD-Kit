@@ -36,6 +36,25 @@ def test_build_load_command_supports_force_program():
     assert "smart_flash=false" in command
 
 
+def test_parse_verify_range_supports_hex_address_and_decimal_words():
+    assert MODULE.parse_verify_range("0x0802b1d4:8") == (0x0802B1D4, 8)
+
+
+def test_build_verify_command_uses_explicit_address_and_word_count():
+    args = argparse.Namespace(
+        target="stm32h723xx",
+        frequency="100000",
+        uid="6d1395736d13957301",
+        elf="app.elf",
+    )
+
+    command = MODULE.build_verify_command(args, "/venv/bin/pyocd", 0x0802B1D4, 8)
+
+    assert command[:2] == ["/venv/bin/pyocd", "commander"]
+    assert command[command.index("-c") + 1] == "read32 0x0802b1d4 32"
+    assert command[command.index("--elf") + 1] == "app.elf"
+
+
 def test_read_image_words_from_bin(tmp_path):
     firmware = tmp_path / "app.bin"
     firmware.write_bytes(bytes.fromhex("00000220 d9c10108 b5bd0108 bd01ff08".replace(" ", "")))

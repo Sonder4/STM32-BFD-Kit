@@ -25,6 +25,24 @@ def parse_int(value: str) -> int:
     return int(value, 0)
 
 
+def parse_verify_range(value: str) -> Tuple[int, int]:
+    parts = value.split(":", 1)
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(
+            f"invalid verify range '{value}', expected <address>:<word_count>"
+        )
+    try:
+        address = parse_int(parts[0].strip())
+        word_count = int(parts[1].strip(), 0)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"invalid verify range '{value}', expected <address>:<word_count>"
+        ) from exc
+    if word_count <= 0:
+        raise argparse.ArgumentTypeError("verify range word_count must be greater than zero")
+    return address, word_count
+
+
 def resolve_pyocd(explicit: str | None = None) -> str:
     candidate = explicit or os.environ.get("PYOCD_BIN") or shutil.which("pyocd")
     if not candidate:
@@ -59,7 +77,12 @@ def build_load_command(args: argparse.Namespace, pyocd: str) -> List[str]:
     return command
 
 
-def build_verify_command(args: argparse.Namespace, pyocd: str, byte_count: int) -> List[str]:
+def build_verify_command(
+    args: argparse.Namespace,
+    pyocd: str,
+    address: int,
+    word_count: int,
+) -> List[str]:
     command = [
         pyocd,
         "commander",
@@ -68,7 +91,7 @@ def build_verify_command(args: argparse.Namespace, pyocd: str, byte_count: int) 
         "-f",
         str(args.frequency),
         "-c",
-        f"read32 0x{args.address:08x} {byte_count}",
+        f"read32 0x{address:08x} {word_count * 4}",
     ]
     if args.uid:
         command.extend(["-u", args.uid])
@@ -127,7 +150,7 @@ def read_image_words(path: Path, address: int, word_count: int, base_address: in
         except KeyError as exc:
             raise FlashError(f"image does not contain byte at 0x{int(exc.args[0]):08x}") from exc
     else:
-        raise FlashError(f"vector verification supports .bin and .hex images, got {path.suffix}")
+        raise FlashError(f"image verification supports .bin and .hex images, got {path.suffix}")
     if len(data) != byte_count:
         raise FlashError(f"image has only {len(data)} bytes for {word_count} words at 0x{address:08x}")
     return [int.from_bytes(data[index : index + 4], "little") for index in range(0, byte_count, 4)]
@@ -160,13 +183,46 @@ def run_logged(command: Sequence[str], log_path: Path | None) -> Tuple[int, str]
     return result.returncode, result.stdout
 
 
-def make_log_paths(log_dir: Path | None, prefix: str) -> Tuple[Path | None, Path | None]:
+def make_log_stem(log_dir: Path | None, prefix: str) -> Tuple[Path | None, str | None]:
     if log_dir is None:
         return None, None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", prefix).strip("_") or "pyocd_flash"
-    stem = f"{timestamp}_{safe_prefix}"
-    return log_dir / f"{stem}_load.log", log_dir / f"{stem}_verify.log"
+    return log_dir, f"{timestamp}_{safe_prefix}"
+
+
+def make_log_path(log_dir: Path | None, stem: str | None, suffix: str) -> Path | None:
+    if log_dir is None or stem is None:
+        return None
+    return log_dir / f"{stem}_{suffix}.log"
+
+
+def verify_word_range(
+    args: argparse.Namespace,
+    pyocd: str,
+    firmware: Path,
+    address: int,
+    word_count: int,
+    bin_base_address: int,
+    log_path: Path | None,
+    label: str,
+) -> None:
+    expected = read_image_words(firmware, address, word_count, bin_base_address)
+    verify_rc, verify_output = run_logged(
+        build_verify_command(args, pyocd, address, word_count),
+        log_path,
+    )
+    if verify_rc != 0:
+        raise FlashError(
+            f"{label} readback failed at 0x{address:08x} with exit code {verify_rc}"
+        )
+    actual = parse_read32_words(verify_output)[:word_count]
+    if actual != expected:
+        raise FlashError(
+            f"{label} verification mismatch at 0x{address:08x}: "
+            f"expected {format_words(expected)}, got {format_words(actual)}"
+        )
+    print(f"{label} verification OK at 0x{address:08x}: {format_words(actual)}")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -182,6 +238,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--elf", help="Optional ELF for PyOCD commander symbol context")
     parser.add_argument("--address", type=parse_int, default=DEFAULT_FLASH_BASE, help="Vector/readback base address")
     parser.add_argument("--vector-words", type=int, default=8, help="Number of 32-bit vector words to compare")
+    parser.add_argument(
+        "--verify-range",
+        action="append",
+        type=parse_verify_range,
+        default=[],
+        metavar="ADDR:WORDS",
+        help="Extra flash readback range(s), expressed as <address>:<32-bit-word-count>",
+    )
     parser.add_argument("--bin-base-address", type=parse_int, default=DEFAULT_FLASH_BASE, help="Base address for raw .bin images")
     parser.add_argument("--no-verify-vector", action="store_true", help="Skip post-flash vector readback comparison")
     parser.add_argument("--log-dir", type=Path, default=Path("logs/flash"), help="Directory for load/verify logs")
@@ -196,26 +260,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not firmware.is_file():
             raise FlashError(f"firmware not found: {firmware}")
         pyocd = resolve_pyocd(args.pyocd)
-        load_log, verify_log = make_log_paths(args.log_dir, args.log_prefix)
+        log_dir, log_stem = make_log_stem(args.log_dir, args.log_prefix)
+        load_log = make_log_path(log_dir, log_stem, "load")
 
         load_rc, _load_output = run_logged(build_load_command(args, pyocd), load_log)
         if load_rc != 0:
             raise FlashError(f"pyocd load failed with exit code {load_rc}")
 
-        if args.no_verify_vector:
+        if args.no_verify_vector and not args.verify_range:
             return 0
 
-        expected = read_image_words(firmware, args.address, args.vector_words, args.bin_base_address)
-        verify_rc, verify_output = run_logged(build_verify_command(args, pyocd, args.vector_words * 4), verify_log)
-        if verify_rc != 0:
-            raise FlashError(f"pyocd vector readback failed with exit code {verify_rc}")
-        actual = parse_read32_words(verify_output)[: args.vector_words]
-        if actual != expected:
-            raise FlashError(
-                "vector verification mismatch: "
-                f"expected {format_words(expected)}, got {format_words(actual)}"
+        verify_index = 0
+        if not args.no_verify_vector:
+            verify_index += 1
+            verify_word_range(
+                args,
+                pyocd,
+                firmware,
+                args.address,
+                args.vector_words,
+                args.bin_base_address,
+                make_log_path(log_dir, log_stem, f"verify_{verify_index:02d}_vector"),
+                "Vector",
             )
-        print(f"Vector verification OK at 0x{args.address:08x}: {format_words(actual)}")
+
+        for address, word_count in args.verify_range:
+            verify_index += 1
+            verify_word_range(
+                args,
+                pyocd,
+                firmware,
+                address,
+                word_count,
+                args.bin_base_address,
+                make_log_path(
+                    log_dir,
+                    log_stem,
+                    f"verify_{verify_index:02d}_{address:08x}_{word_count}w",
+                ),
+                "Range",
+            )
         return 0
     except FlashError as exc:
         print(f"Error: {exc}", file=sys.stderr)
