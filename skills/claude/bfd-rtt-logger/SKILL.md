@@ -53,6 +53,15 @@ python3 ./.codex/skills/bfd-project-init/scripts/bootstrap.py --project-root . -
 3. Capture with J-Link `quick/dual`.
 4. Archive logs and extract key evidence lines.
 
+## USB CDC Service False-Negative Triage
+
+If a ROS/service transaction clearly leaves the host, but the host never receives `SYSTEM_STATUS`, `ODOM`, or other regular upstream packets, do not immediately conclude that the service FSM is broken. Check RTT first:
+
+- If RTT repeatedly shows lines such as `W:[usb] tx fail ... status=1`, treat `status=1` as `USBD_BUSY` on the ST USB CDC stack.
+- In this pattern, the visible failure is usually the MCU USB upstream path, not the service handler itself.
+- For `mcu_comm`-style firmware that reuses a shared static TX buffer, confirm that the USB send path waits for `TxState == 0` before reusing the buffer and also waits for TX completion after `CDC_Transmit_*()` succeeds.
+- When this signature appears, prioritize transport-layer repair or verification before spending time on service/action state machines.
+
 ## Probe Capability Boundary
 
 - J-Link supports `quick`, `dual`, and native HSS.

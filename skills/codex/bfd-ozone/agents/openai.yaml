@@ -1,0 +1,4 @@
+interface:
+  display_name: "BFD Ozone"
+  short_description: "Prepare and launch SEGGER Ozone STM32 sessions"
+  default_prompt: "Use $bfd-ozone to validate this STM32 Ozone project and launch a ready-to-debug Ozone session."

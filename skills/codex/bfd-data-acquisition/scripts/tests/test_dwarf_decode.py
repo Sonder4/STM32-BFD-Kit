@@ -157,6 +157,23 @@ class DwarfDecodeTest(unittest.TestCase):
 
         self.assertEqual(decoded, 0x1122334455667788)
 
+    def test_decode_truncated_scalar_returns_metadata_instead_of_raising(self):
+        decoded = DECODE_MODULE.decode_bytes_by_type(b"\x34", "type:unsigned int", self.type_schemas)
+
+        self.assertEqual(decoded["decode_status"], "truncated")
+        self.assertEqual(decoded["type_ref"], "type:unsigned int")
+        self.assertEqual(decoded["expected_size"], 4)
+        self.assertEqual(decoded["actual_size"], 1)
+
+    def test_decode_truncated_struct_marks_short_field_without_raising(self):
+        decoded = DECODE_MODULE.decode_bytes_by_type(b"\x07\x00\x00\x00", "type:Outer", self.type_schemas)
+
+        self.assertEqual(decoded["__decode_status__"], "truncated")
+        self.assertEqual(decoded["inner"]["count"], 7)
+        self.assertEqual(decoded["inner"]["mode"]["decode_status"], "truncated")
+        self.assertEqual(decoded["temperature"]["decode_status"], "truncated")
+        self.assertEqual(decoded["flag"]["decode_status"], "truncated")
+
     def test_flatten_decoded_value_uses_field_paths(self):
         decoded = {
             "inner": {"count": 7, "mode": {"value": 2, "name": "MODE_B"}},

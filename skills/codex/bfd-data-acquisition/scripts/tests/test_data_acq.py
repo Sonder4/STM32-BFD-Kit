@@ -27,6 +27,29 @@ class DataAcqTest(unittest.TestCase):
         self.assertIn(Path("/tmp/project/.codex/bfd/active_profile.env"), bfd_candidates)
         self.assertIn(Path("/tmp/project/.codex/bfd/active_profile.env"), codex_candidates)
 
+    def test_find_profile_candidate_paths_includes_current_project_cwd(self):
+        script_path = Path("/opt/BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py")
+
+        candidates = MODULE.find_profile_candidate_paths(
+            script_path,
+            cwd=Path("/tmp/project/subdir"),
+        )
+
+        self.assertIn(Path("/tmp/project/.codex/bfd/active_profile.env"), candidates)
+
+    def test_default_dwarf_cache_root_prefers_project_cwd_codex(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            (tmp_path / ".codex").mkdir()
+            (tmp_path / "subdir").mkdir()
+
+            cache_root = MODULE.default_dwarf_cache_root(
+                script_path=Path("/opt/BFD-Kit/skills/codex/bfd-data-acquisition/scripts/data_acq.py"),
+                cwd=tmp_path / "subdir",
+            )
+
+            self.assertEqual(cache_root, tmp_path / ".codex/bfd/dwarf_cache")
+
     def test_parse_layout_supports_u32_vectors(self):
         layout = MODULE.parse_layout("u32x2")
 
@@ -561,6 +584,44 @@ class DataAcqTest(unittest.TestCase):
         self.assertEqual(symbol_schema.address, "0x20000020")
         self.assertEqual(type_schemas, {})
         self.assertEqual(cache_status, "rebuild")
+
+    def test_resolve_symbol_auto_root_size_uses_schema_size(self):
+        type_schemas = {
+            "type:Leaf": type("LeafSchema", (), {"size": 44})(),
+            "type:Array": type("ArraySchema", (), {"size": 176})(),
+        }
+
+        self.assertEqual(MODULE.resolve_symbol_auto_root_size("type:Array", type_schemas), 176)
+
+    def test_build_metadata_prefers_explicit_raw_size_when_no_layout(self):
+        args = Namespace(
+            device="STM32F427II",
+            interface="SWD",
+            speed=4000,
+            count=1,
+            mode="snapshot",
+            size=4,
+            pointer_symbol=None,
+            decode_profile=None,
+            symbol="chassis_parameter",
+            workflow_mode="symbol_auto",
+            follow_depth=0,
+            effective_capture_mode="snapshot",
+            elf="builds/gcc/debug/RSCF_A.elf",
+        )
+
+        metadata = MODULE.build_metadata(
+            args=args,
+            symbol="chassis_parameter",
+            address=0x20014118,
+            layout=None,
+            interval_ms=1,
+            raw_size=388,
+        )
+
+        self.assertEqual(metadata["size"], 388)
+        self.assertEqual(metadata["follow_depth"], 0)
+        self.assertEqual(metadata["capture_mode"], "snapshot")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import ctypes
 import os
+import sys
 from typing import Iterable, Optional
 
 from .env import ProbeInfo
@@ -21,10 +22,82 @@ class JLinkDllError(RuntimeError):
     """Raised when libjlinkarm operations fail."""
 
 
-def iter_default_jlinkarm_dll_candidates() -> Iterable[str]:
-    env_path = os.environ.get("JLINKARM_DLL")
+def normalize_platform_name(platform_name: Optional[str] = None) -> str:
+    raw = (platform_name or sys.platform).strip().lower()
+    if raw.startswith("win"):
+        return "windows"
+    if raw.startswith("linux"):
+        return "linux"
+    if raw.startswith("darwin"):
+        return "darwin"
+    return raw
+
+
+def default_jlink_dll_placeholder(platform_name: Optional[str] = None) -> str:
+    normalized = normalize_platform_name(platform_name)
+    if normalized == "windows":
+        return r"<JLINK_INSTALL_DIR>\JLink_x64.dll"
+    return "<JLINK_INSTALL_DIR>/libjlinkarm.so"
+
+
+def default_jlink_dll_hints(platform_name: Optional[str] = None) -> list[str]:
+    normalized = normalize_platform_name(platform_name)
+    if normalized == "windows":
+        return [
+            r"%JLINKARM_DLL%",
+            r"%ProgramFiles%\SEGGER\JLink\JLink_x64.dll",
+            r"%ProgramFiles(x86)%\SEGGER\JLink\JLink_x64.dll",
+            default_jlink_dll_placeholder("windows"),
+        ]
+    return [
+        "$JLINKARM_DLL",
+        "/opt/SEGGER/JLink/libjlinkarm.so",
+        "/usr/local/lib/libjlinkarm.so",
+        default_jlink_dll_placeholder("linux"),
+    ]
+
+
+def iter_default_jlinkarm_dll_candidates(
+    platform_name: Optional[str] = None,
+    environ: Optional[dict[str, str]] = None,
+) -> Iterable[str]:
+    env = environ or os.environ
+    normalized = normalize_platform_name(platform_name)
+    env_path = env.get("JLINKARM_DLL")
     if env_path:
         yield env_path
+
+    jlink_exe = env.get("JLINK_EXE")
+    if jlink_exe:
+        exe_dir = Path(jlink_exe).expanduser().parent
+        if normalized == "windows":
+            for name in ("JLink_x64.dll", "JLinkARM.dll"):
+                yield str(exe_dir / name)
+        else:
+            for name in ("libjlinkarm.so", "libjlinkarm.so.0", "libjlinkarm.so.1"):
+                yield str(exe_dir / name)
+
+    if normalized == "windows":
+        seen: set[str] = set()
+        roots = [
+            env.get("ProgramW6432"),
+            env.get("ProgramFiles"),
+            env.get("ProgramFiles(x86)"),
+        ]
+        for root in roots:
+            if not root:
+                continue
+            base = Path(root)
+            direct_dir = base / "SEGGER" / "JLink"
+            for candidate_dir in [direct_dir, *sorted(base.glob("SEGGER/JLink*"))]:
+                for name in ("JLink_x64.dll", "JLinkARM.dll"):
+                    candidate = candidate_dir / name
+                    rendered = str(candidate)
+                    if rendered in seen:
+                        continue
+                    seen.add(rendered)
+                    yield rendered
+        return
 
     for pattern in (
         "/opt/SEGGER/JLink*/libjlinkarm.so",
@@ -38,15 +111,19 @@ def iter_default_jlinkarm_dll_candidates() -> Iterable[str]:
                 yield str(path)
 
 
-def resolve_jlinkarm_dll(candidates: Optional[Iterable[Optional[str]]] = None) -> Path:
-    search_candidates = list(candidates) if candidates is not None else list(iter_default_jlinkarm_dll_candidates())
+def resolve_jlinkarm_dll(
+    candidates: Optional[Iterable[Optional[str]]] = None,
+    platform_name: Optional[str] = None,
+) -> Path:
+    search_candidates = list(candidates) if candidates is not None else list(iter_default_jlinkarm_dll_candidates(platform_name=platform_name))
     for candidate in search_candidates:
         if not candidate:
             continue
         path = Path(candidate).expanduser()
         if path.is_file():
             return path.resolve()
-    raise JLinkDllError("libjlinkarm.so not found")
+    hints = ", ".join(default_jlink_dll_hints(platform_name))
+    raise JLinkDllError(f"J-Link native DLL not found; set JLINKARM_DLL or install it at one of: {hints}")
 
 
 def choose_probe(probes: list[ProbeInfo], usb_sn: Optional[str]) -> ProbeInfo:
@@ -95,9 +172,16 @@ class JLinkDll:
 
     def __init__(self, dll_path: Optional[str | Path] = None, dll=None) -> None:
         self.dll_path = Path(dll_path).expanduser().resolve() if dll_path else resolve_jlinkarm_dll()
-        self._dll = dll if dll is not None else ctypes.CDLL(str(self.dll_path))
+        self._dll = dll if dll is not None else self._load_native_dll(self.dll_path)
         self._is_open = False
         self._configure_prototypes()
+
+    @staticmethod
+    def _load_native_dll(dll_path: Path):
+        normalized = normalize_platform_name()
+        if normalized == "windows":
+            return ctypes.WinDLL(str(dll_path))
+        return ctypes.CDLL(str(dll_path))
 
     def _configure_prototypes(self) -> None:
         self._dll.JLINKARM_Open.restype = ctypes.c_char_p

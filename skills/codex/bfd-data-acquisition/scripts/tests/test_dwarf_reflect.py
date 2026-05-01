@@ -23,6 +23,26 @@ REFLECT_SPEC.loader.exec_module(REFLECT_MODULE)
 ELF_PATH = Path("builds/gcc/debug/RSCF_A.elf")
 
 
+class FakeAttr:
+    def __init__(self, value):
+        self.value = value
+
+
+class FakeDie:
+    def __init__(self, tag, *, offset=0, attributes=None, children=None, refs=None):
+        self.tag = tag
+        self.offset = offset
+        self.attributes = attributes or {}
+        self._children = children or []
+        self._refs = refs or {}
+
+    def iter_children(self):
+        return iter(self._children)
+
+    def get_DIE_from_attribute(self, name):
+        return self._refs[name]
+
+
 @unittest.skipUnless(ELF_PATH.is_file(), "requires built ELF fixture")
 class DwarfReflectTest(unittest.TestCase):
     def test_reflect_symbol_schema_for_hub_m3508_pointer_array(self):
@@ -90,6 +110,41 @@ class DwarfReflectTest(unittest.TestCase):
             self.assertTrue(
                 SCHEMA_MODULE.type_cache_path(cache_root, fingerprint, "type:DJIMotorInstance").is_file()
             )
+
+    def test_build_array_schema_uses_typedef_target_size_as_stride(self):
+        struct_die = FakeDie(
+            "DW_TAG_structure_type",
+            offset=0x30,
+            attributes={
+                "DW_AT_name": FakeAttr(b"Wheel_Group_t"),
+                "DW_AT_byte_size": FakeAttr(44),
+            },
+        )
+        typedef_die = FakeDie(
+            "DW_TAG_typedef",
+            offset=0x20,
+            attributes={"DW_AT_name": FakeAttr(b"wheel_alias")},
+            refs={"DW_AT_type": struct_die},
+        )
+        subrange_die = FakeDie(
+            "DW_TAG_subrange_type",
+            offset=0x11,
+            attributes={"DW_AT_count": FakeAttr(4)},
+        )
+        array_die = FakeDie(
+            "DW_TAG_array_type",
+            offset=0x10,
+            refs={"DW_AT_type": typedef_die},
+            children=[subrange_die],
+        )
+
+        context = REFLECT_MODULE.ReflectContext(type_schemas={})
+        schema = REFLECT_MODULE.build_array_schema(array_die, context, preferred_name=None)
+
+        self.assertEqual(schema.element_type_ref, "type:wheel_alias")
+        self.assertEqual(schema.count, 4)
+        self.assertEqual(schema.stride, 44)
+        self.assertEqual(schema.size, 176)
 
 
 if __name__ == "__main__":

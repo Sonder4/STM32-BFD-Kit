@@ -57,7 +57,7 @@ class STLinkFlasher:
         
         args = [
             "-c", f"port=SWD",
-            f"speed={self.speed}",
+            f"freq={self.speed}",
             f"mode={mode}"
         ]
         
@@ -128,7 +128,7 @@ class STLinkFlasher:
         print(f"Target address: 0x{address:08X}")
         
         args = [
-            "-c", "port=SWD", f"speed={self.speed}",
+            "-c", "port=SWD", f"freq={self.speed}",
         ]
         
         if erase:

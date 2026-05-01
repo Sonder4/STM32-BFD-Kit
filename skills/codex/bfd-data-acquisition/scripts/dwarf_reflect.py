@@ -40,6 +40,25 @@ SUPPORTED_TYPE_TAGS = {
 }
 
 
+BUILTIN_SCALAR_SIZES = {
+    "type:unsigned char": 1,
+    "type:char": 1,
+    "type:signed char": 1,
+    "type:_Bool": 1,
+    "type:short unsigned int": 2,
+    "type:short int": 2,
+    "type:unsigned int": 4,
+    "type:int": 4,
+    "type:long unsigned int": 4,
+    "type:long int": 4,
+    "type:long long unsigned int": 8,
+    "type:long long int": 8,
+    "type:float": 4,
+    "type:double": 8,
+    "type:void": 0,
+}
+
+
 class DwarfReflectError(RuntimeError):
     pass
 
@@ -113,10 +132,30 @@ def make_type_id(kind: str, name: str) -> str:
 
 
 def byte_size_of_die(die, default: int = 4) -> int:
-    size_attr = unwrap_qualifiers(die).attributes.get("DW_AT_byte_size")
+    current = unwrap_qualifiers(die)
+    while current.tag == "DW_TAG_typedef":
+        size_attr = current.attributes.get("DW_AT_byte_size")
+        if size_attr is not None:
+            return int(size_attr.value)
+        if "DW_AT_type" not in current.attributes:
+            return default
+        current = unwrap_qualifiers(current.get_DIE_from_attribute("DW_AT_type"))
+
+    size_attr = current.attributes.get("DW_AT_byte_size")
     if size_attr is None:
         return default
     return int(size_attr.value)
+
+
+def size_of_type_ref(type_ref: str, context: ReflectContext) -> int:
+    if type_ref in BUILTIN_SCALAR_SIZES:
+        return BUILTIN_SCALAR_SIZES[type_ref]
+    if type_ref.startswith("unsupported:"):
+        return 0
+    schema = context.type_schemas.get(type_ref)
+    if schema is None:
+        raise DwarfReflectError(f"reflected type schema missing for size lookup: {type_ref}")
+    return int(schema.size)
 
 
 def reflect_symbol_from_elf(elf_path: Path, symbol_name: str) -> Tuple[SymbolSchema, Dict[str, object]]:
@@ -260,7 +299,7 @@ def build_array_schema(die, context: ReflectContext, preferred_name: Optional[st
     element_type_die = die.get_DIE_from_attribute("DW_AT_type")
     element_type_ref = reflect_type_die(element_type_die, context, preferred_name=None, allow_unsupported=True)
     count = resolve_array_count(die)
-    stride = byte_size_of_die(element_type_die, default=4)
+    stride = size_of_type_ref(element_type_ref, context)
     array_name = preferred_name or f"{element_type_ref.replace(':', '_')}[{count}]"
     return ArrayTypeSchema(
         type_id=make_type_id("array", array_name),

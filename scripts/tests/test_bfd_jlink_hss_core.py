@@ -17,9 +17,11 @@ from bfd_jlink_hss_core.hss_sampling import (
     decode_scalar_bytes,
     parse_hss_samples,
     read_hss_payload_with_backoff,
+    sample_scalar_specs,
     sample_scalar_symbols,
     sample_scalar_symbol,
 )
+from bfd_jlink_hss_core.hssdv_project import build_fixed_scalar_capture_spec
 from bfd_jlink_hss_core.jlink_dll import HssBlock, JLinkDll, JLinkDllError, _NativeHssBlock, choose_probe
 
 
@@ -108,6 +110,15 @@ def _resolved_symbol(expression="chassis_parameter.IMU.yaw", address=0x200002BC)
             "to_dict": lambda self=None: {"expression": expression, "final_address_hex": f"0x{address:08X}"},
         },
     )()
+
+
+def _fixed_spec(expression="uwTick", address=0x20000174, scalar_type="u32"):
+    return build_fixed_scalar_capture_spec(
+        expression=expression,
+        address=address,
+        scalar_type=scalar_type,
+        source_kind="hssdv-project",
+    )
 
 
 def test_parse_probe_list_extracts_usb_probe_rows():
@@ -324,6 +335,41 @@ def test_sample_scalar_symbols_does_not_treat_raw_word_2_as_symbol_limit(tmp_pat
     )
 
     assert result.sample_count == 1
+
+
+def test_sample_scalar_specs_supports_fixed_project_specs(tmp_path, monkeypatch):
+    payload = struct.pack("<IIf", 0, 123, 1.5) + struct.pack("<IIf", 1, 456, 2.5)
+    fake_dll = FakeSamplingDll([payload])
+    specs = [
+        _fixed_spec("uwTick", 0x20000174, "u32"),
+        _fixed_spec("staticFltVarTest", 0x20000178, "f32"),
+    ]
+
+    values = iter([0.0, 0.01, 0.02, 0.03])
+    monkeypatch.setattr("bfd_jlink_hss_core.hss_sampling.time.monotonic", lambda: next(values))
+    monkeypatch.setattr("bfd_jlink_hss_core.hss_sampling.time.sleep", lambda _seconds: None)
+
+    result = sample_scalar_specs(
+        dll=fake_dll,
+        capture_specs=specs,
+        device="STM32F103VE",
+        interface="SWD",
+        speed_khz=8000,
+        duration_s=0.02,
+        period_us=1000,
+        output_csv=str(tmp_path / "hssdv.csv"),
+    )
+
+    content = Path(result.csv_path).read_text(encoding="utf-8")
+    assert "sample_index,time_us,uwTick__value,uwTick__raw_hex" in content
+    assert "staticFltVarTest__value" in content
+    meta = Path(result.meta_path).read_text(encoding="utf-8")
+    assert '"expression": "uwTick"' in meta
+    assert '"source_kind": "hssdv-project"' in meta
+    assert result.sample_count == 2
+    assert result.record_size_bytes == 12
+    assert fake_dll.stopped is True
+    assert fake_dll.closed is True
 
 
 def test_sample_scalar_symbol_fails_when_no_samples(tmp_path, monkeypatch):

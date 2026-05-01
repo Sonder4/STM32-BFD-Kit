@@ -25,9 +25,24 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 
-def find_profile_candidate_paths(script_path: Path) -> List[Path]:
+def iter_search_roots(script_path: Path, cwd: Optional[Path] = None) -> List[Path]:
+    roots: List[Path] = []
+    seen = set()
+    for root in [script_path.resolve().parent, *script_path.resolve().parents]:
+        if root not in seen:
+            roots.append(root)
+            seen.add(root)
+    cwd_path = (cwd or Path.cwd()).resolve()
+    for root in [cwd_path, *cwd_path.parents]:
+        if root not in seen:
+            roots.append(root)
+            seen.add(root)
+    return roots
+
+
+def find_profile_candidate_paths(script_path: Path, cwd: Optional[Path] = None) -> List[Path]:
     candidates: List[Path] = []
-    for parent in [script_path.resolve().parent, *script_path.resolve().parents]:
+    for parent in iter_search_roots(script_path, cwd=cwd):
         for candidate in (
             parent / ".codex/bfd/active_profile.env",
             parent / ".codex/stm32/bootstrap/active_profile.env",
@@ -39,7 +54,7 @@ def find_profile_candidate_paths(script_path: Path) -> List[Path]:
 
 def load_profile_defaults() -> Dict[str, str]:
     script_path = Path(__file__).resolve()
-    candidates = find_profile_candidate_paths(script_path)
+    candidates = find_profile_candidate_paths(script_path, cwd=Path.cwd())
 
     values: Dict[str, str] = {}
     for path in candidates:
@@ -309,9 +324,9 @@ def build_symbol_summary(metadata: Dict[str, Any], rows: Sequence[Dict[str, Any]
     return "\n".join(lines) + "\n"
 
 
-def default_dwarf_cache_root(script_path: Optional[Path] = None) -> Path:
+def default_dwarf_cache_root(script_path: Optional[Path] = None, cwd: Optional[Path] = None) -> Path:
     resolved_script = (script_path or Path(__file__)).resolve()
-    for parent in [resolved_script.parent, *resolved_script.parents]:
+    for parent in iter_search_roots(resolved_script, cwd=cwd):
         codex_dir = parent / ".codex"
         if codex_dir.is_dir():
             return codex_dir / "bfd/dwarf_cache"
@@ -511,6 +526,11 @@ def capture_symbol_auto_rows(
 
         rows.append(row)
     return rows
+
+
+def resolve_symbol_auto_root_size(root_type_ref: str, type_schemas: Mapping[str, Any]) -> int:
+    dwarf_decode = load_local_module("dwarf_decode")
+    return dwarf_decode.type_byte_size(root_type_ref, type_schemas)
 
 
 def build_nonstop_setup_commands(port: int = DEFAULT_GDB_PORT) -> List[str]:
@@ -877,7 +897,13 @@ class DataAcquisition:
             )
             if not bin_path.exists():
                 raise RuntimeError(f"snapshot capture failed at 0x{address:08X}: {output}")
-            return bin_path.read_bytes()
+            data = bin_path.read_bytes()
+            if len(data) != size:
+                raise RuntimeError(
+                    f"snapshot capture size mismatch at 0x{address:08X}: expected {size} bytes, "
+                    f"got {len(data)} bytes"
+                )
+            return data
 
     def read_nonstop_layout(self, address: int, layout: Layout) -> List[Any]:
         output = self.run_jlink_command(["connect", *build_nonstop_read_commands(address, layout)])
@@ -1242,6 +1268,7 @@ def build_metadata(
     address: int,
     layout: Optional[Layout],
     interval_ms: int,
+    raw_size: Optional[int] = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {
         "device": args.device,
@@ -1258,7 +1285,7 @@ def build_metadata(
         metadata["layout"] = f"{layout.element_type}x{layout.count}"
         metadata["size"] = layout.total_size
     else:
-        metadata["size"] = args.size
+        metadata["size"] = raw_size if raw_size is not None else args.size
     if getattr(args, "pointer_symbol", None):
         metadata["pointer_symbol"] = args.pointer_symbol
         metadata["seq_symbol"] = args.seq_symbol
@@ -1378,6 +1405,7 @@ def main() -> int:
     symbol_auto_root_type_ref: Optional[str] = None
     symbol_auto_type_schemas: Optional[Dict[str, Any]] = None
     symbol_auto_cache_status: Optional[str] = None
+    symbol_auto_root_size: Optional[int] = None
     if args.variable:
         if not elf_file:
             print("Error: no ELF file found for symbol resolution", file=sys.stderr)
@@ -1448,6 +1476,10 @@ def main() -> int:
             return 1
         symbol_name = symbol_schema.symbol
         symbol_auto_root_type_ref = symbol_schema.root_type_ref
+        symbol_auto_root_size = resolve_symbol_auto_root_size(
+            symbol_auto_root_type_ref,
+            symbol_auto_type_schemas,
+        )
     else:
         parser.print_help()
         return 1
@@ -1495,7 +1527,8 @@ def main() -> int:
     if layout is not None:
         print(f"Layout: {layout.element_type}x{layout.count}")
     else:
-        print(f"Raw size: {args.size} bytes")
+        raw_size = symbol_auto_root_size if symbol_auto_root_size is not None else args.size
+        print(f"Raw size: {raw_size} bytes")
     print(f"Samples: {args.count}, interval: {interval_ms} ms")
 
     try:
@@ -1562,6 +1595,7 @@ def main() -> int:
         address=address,
         layout=layout,
         interval_ms=interval_ms,
+        raw_size=symbol_auto_root_size,
     )
     if symbol_auto_root_type_ref is not None:
         metadata["root_type_ref"] = symbol_auto_root_type_ref

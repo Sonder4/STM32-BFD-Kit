@@ -45,6 +45,16 @@ def format_hex32(value: int) -> str:
     return f"0x{value & 0xFFFFFFFF:08X}"
 
 
+def build_truncated_decode(type_ref: str, expected_size: int, actual_size: int, raw: bytes) -> Dict[str, Any]:
+    return {
+        "decode_status": "truncated",
+        "type_ref": type_ref,
+        "expected_size": expected_size,
+        "actual_size": actual_size,
+        "raw_hex": raw.hex(),
+    }
+
+
 def type_byte_size(type_ref: str, type_schemas: Mapping[str, Any]) -> int:
     if type_ref.startswith("unsupported:"):
         return 0
@@ -67,12 +77,18 @@ def decode_bytes_by_type(
 
     if type_ref in SCALAR_READERS:
         size, reader = SCALAR_READERS[type_ref]
+        if len(raw) < size:
+            return build_truncated_decode(type_ref, size, len(raw), raw)
         return reader(raw[:size])
 
     schema = type_schemas[type_ref]
 
     if schema.kind == "struct":
         decoded: Dict[str, Any] = {}
+        if len(raw) < int(schema.size):
+            decoded["__decode_status__"] = "truncated"
+            decoded["__expected_size__"] = int(schema.size)
+            decoded["__actual_size__"] = len(raw)
         for field in schema.fields:
             field_size = type_byte_size(field.type_ref, type_schemas)
             field_raw = raw[field.offset : field.offset + field_size]
@@ -87,6 +103,7 @@ def decode_bytes_by_type(
 
     if schema.kind == "array":
         values = []
+        truncated = len(raw) < int(schema.size)
         for index in range(schema.count):
             start = index * schema.stride
             end = start + schema.stride
@@ -98,6 +115,15 @@ def decode_bytes_by_type(
                     follow_depth=follow_depth,
                     read_memory=read_memory,
                 )
+            )
+        if truncated:
+            values.append(
+                {
+                    "decode_status": "truncated_array",
+                    "type_ref": type_ref,
+                    "expected_size": int(schema.size),
+                    "actual_size": len(raw),
+                }
             )
         return values
 
@@ -111,6 +137,8 @@ def decode_bytes_by_type(
             "s32": "type:int",
         }.get(schema.underlying_type, "type:unsigned int")
         value = decode_bytes_by_type(raw, scalar_type_ref, type_schemas)
+        if isinstance(value, dict) and value.get("decode_status") == "truncated":
+            return value
         name = None
         for enum_name, enum_value in schema.values.items():
             if enum_value == value:
@@ -119,6 +147,8 @@ def decode_bytes_by_type(
         return {"value": value, "name": name}
 
     if schema.kind == "pointer":
+        if len(raw) < int(schema.pointer_size):
+            return build_truncated_decode(type_ref, int(schema.pointer_size), len(raw), raw)
         pointer_value = struct.unpack("<I", raw[: schema.pointer_size])[0]
         decoded = {
             "pointer_value": format_hex32(pointer_value),

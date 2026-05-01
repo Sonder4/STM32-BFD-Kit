@@ -4,13 +4,15 @@
 
 BFD-Kit is a portable, CLI-first toolkit for AI-assisted STM32 debug workflows.
 It standardizes IOC discovery, active profile generation, flashing, RTT logging, register/data capture, and fault evidence collection.
+中文概要：BFD-Kit 面向 `STM32F4/STM32H7`，强调 `CLI + STM32CubeCLT + 可归档证据` 的统一调试/采集工作流。
 
 ## Project Note
 
 - This project leverages [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) to drive CLI-based handling for J-Link related workflows.
 - ST-Link support is split by capability: flash and RTT polling are supported, but there is no ST-Link equivalent of native J-Link HSS in this revision.
-- The toolkit currently works best on Ubuntu 22.04.
-- Windows support has not been ported yet.
+- The toolkit still validates fastest on Ubuntu 22.04, but this revision also adds Windows/Linux path normalization around `STM32CubeCLT`.
+- `BFD-Kit/scripts/bfd_tool_config.py` and `BFD-Kit/scripts/bfd_project_detect.py` are the new cross-platform entry points for host tool discovery and STM32 project profiling.
+- `Keil` compatibility is retained; `IAR` is intentionally not carried forward in this repository revision.
 
 ## Scope
 
@@ -25,9 +27,16 @@ It standardizes IOC discovery, active profile generation, flashing, RTT logging,
 - `BFD-Kit/skills/codex/`: canonical Codex skill pack
 - `BFD-Kit/skills/claude/`: canonical Claude skill pack
 - `BFD-Kit/resources/stm32/templates/`: family templates (`f4/`, `h7/`)
+- `BFD-Kit/resources/stm32/telemetry_ring/`: family-agnostic MCU telemetry ring templates for `STM32F4` / `STM32H7`
 - `BFD-Kit/init_project.sh`: one-command project onboarding entry
+- `BFD-Kit/scripts/bfd_install.py`: cross-platform Python installer for copy/cutover/tool-detect/profile-bootstrap flows
 - `BFD-Kit/scripts/bfd_jlink_hss.sh`: native J-Link HSS wrapper with managed Python runtime
+- `BFD-Kit/scripts/bfd_pyocd_hss.py`: DAPLink / CMSIS-DAP fixed-address sampler with float-count benchmarking
+- `BFD-Kit/scripts/bfd_telemetry_ring.py`: generic telemetry-ring sizing and PyOCD capture utility
+- `BFD-Kit/scripts/bfd_tool_config.py`: workspace/global tool-path registry with `STM32CubeCLT` discovery
+- `BFD-Kit/scripts/bfd_project_detect.py`: STM32 project metadata detector for `CMake`, `Keil`, `.ioc`, and artifact candidates
 - `BFD-Kit/scripts/bfd_stlink_rtt.py`: polling-based ST-Link RTT capture built on `STM32_Programmer_CLI`
+- `BFD-Kit/docs/platform_compatibility.md`: Ubuntu/Windows migration notes and tool-path conventions
 - `BFD-Kit/.runtime/venv`: local Python runtime installed on demand for portable script execution
 - `BFD-Kit/scripts/migrate_bfd_skills.py`: import/cutover utility
 - `BFD-Kit/MAINTENANCE-zh.md`: maintainer-facing maintenance checklist
@@ -57,12 +66,16 @@ Legacy overlapping STM32 skills are intended to be removed from active mirrors o
 
 - `bfd-data-acquisition` now supports generic `--mode symbol-auto`
 - `bfd-data-acquisition` now includes a native J-Link HSS CLI path for non-halting fixed-address scalar sampling
+- `bfd-data-acquisition` now also includes a DAPLink / PyOCD float-count benchmark path for answering "how many floats can stay at 1000 Hz"
 - `symbol-auto` uses `ELF + DWARF` reflection to decode global/static objects without business-specific hardcoding
 - DWARF schemas are cached under `.codex/bfd/dwarf_cache/` for reuse across repeated inspections
 - RTT failure guidance now explicitly routes to RAM sampling instead of ad-hoc GDB/J-Link command design
 - `bfd-debug-interface` and `bfd-rtt-logger` delegate structured symbol decoding to `bfd-data-acquisition`
 - `bfd-rtt-logger` now includes a polling-based ST-Link RTT path built on `STM32_Programmer_CLI`
 - probe capability boundaries are now explicit: ST-Link RTT is supported, but ST-Link has no HSS-equivalent path in this revision
+- a reusable MCU telemetry-ring template is now bundled for `STM32F4` and `STM32H7`, together with a host-side decoder/capture CLI
+- `bfd_telemetry_ring.py` now supports incremental ring-record reads and `--field-array prefix:type:count` for large float payload benchmarks
+- `bfd_tool_config.py` and `bfd_project_detect.py` now provide the cross-platform base layer for `STM32CubeCLT`, `Keil`, and artifact detection
 
 ## Probe Capability Boundaries
 
@@ -95,6 +108,19 @@ Current recommendation:
 
 ## Fast Init
 
+Preferred cross-platform entry:
+
+```bash
+# Copy BFD-Kit into the target STM32 project, update active mirrors, detect host tools, and bootstrap the profile
+python3 BFD-Kit/scripts/bfd_install.py \
+  --project-root /path/to/your/stm32-project \
+  --detect-tools \
+  --bootstrap-profile
+
+# Inspect the current install state later
+python3 BFD-Kit/scripts/bfd_install.py --project-root /path/to/your/stm32-project --status
+```
+
 ```bash
 # One command: install/update BFD skills, refresh .codex/bfd profile, and prepare local Python runtime
 bash BFD-Kit/init_project.sh --project-root .
@@ -104,6 +130,26 @@ bash BFD-Kit/init_project.sh --project-root . --cutover-only
 bash BFD-Kit/init_project.sh --project-root . --bootstrap-only --force-refresh
 bash BFD-Kit/init_project.sh --project-root . --runtime-only
 ```
+
+## Cross-Platform Setup
+
+```bash
+# Detect common host tools and persist them into the target workspace
+python3 BFD-Kit/scripts/bfd_tool_config.py detect --write --workspace .
+
+# Review the persisted tool map
+python3 BFD-Kit/scripts/bfd_tool_config.py list --workspace .
+
+# Detect the active STM32 project profile from .ioc / CMake / Keil artifacts
+python3 BFD-Kit/scripts/bfd_project_detect.py --workspace . --json
+```
+
+Platform notes:
+
+- shared Ubuntu/Windows guidance lives in `BFD-Kit/docs/platform_compatibility.md`
+- `STM32CubeCLT` is the preferred shared toolchain lane
+- `Keil` stays supported for compatibility; `IAR` does not
+- `scripts/bfd_install.py` is the preferred Windows/Linux bootstrap entry when a Bash-first flow is inconvenient
 
 ## Standard Workflow
 
@@ -146,6 +192,32 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
   --period-us 1000 \
   --output logs/data_acq/imu_yaw_pitch_hss.csv
 
+# 3.7) For DAPLink / CMSIS-DAP throughput limits, benchmark contiguous float reads directly
+RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_pyocd_hss.py --json benchmark-float \
+  --address 0x200096E8 \
+  --min-floats 1 \
+  --max-floats 32 \
+  --target stm32h723xx \
+  --uid 6d1395736d13957301 \
+  --frequency 10000000 \
+  --duration 0.2 \
+  --period-us 1000 \
+  --output logs/data_acq/pyocd_float_benchmark.json
+
+# 3.8) When host polling becomes the bottleneck, move the fast path into an MCU telemetry ring
+RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_telemetry_ring.py --json capture-pyocd \
+  --address 0x24020000 \
+  --field pos_rad:f32 \
+  --field vel_rads:f32 \
+  --field torque_nm:f32 \
+  --field state:u32 \
+  --target stm32h723xx \
+  --uid 6d1395736d13957301 \
+  --frequency 10000000 \
+  --duration 1.0 \
+  --poll-period-us 1000 \
+  --output logs/data_acq/app_ring_capture.csv
+
 # 4) One-shot debug session
 ./build_tools/jlink/debug.sh | tee logs/debug/debug_$(date +%Y%m%d_%H%M%S).log
 ```
@@ -185,10 +257,38 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
   --duration 1 \
   --period-us 1000 \
   --output logs/data_acq/imu_yaw_pitch_hss.csv
+
+# DAPLink / CMSIS-DAP benchmark: find the largest float count that still holds 1000 Hz
+RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_pyocd_hss.py --json benchmark-float \
+  --address 0x200096E8 \
+  --min-floats 1 \
+  --max-floats 32 \
+  --target stm32h723xx \
+  --uid 6d1395736d13957301 \
+  --frequency 10000000 \
+  --duration 0.2 \
+  --period-us 1000 \
+  --output logs/data_acq/pyocd_float_benchmark.json
+
+# MCU telemetry ring capture when the control loop itself runs faster than host polling
+RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_telemetry_ring.py --json capture-pyocd \
+  --address 0x24020000 \
+  --field pos_rad:f32 \
+  --field vel_rads:f32 \
+  --field torque_nm:f32 \
+  --field state:u32 \
+  --target stm32h723xx \
+  --uid 6d1395736d13957301 \
+  --frequency 10000000 \
+  --duration 1.0 \
+  --poll-period-us 1000 \
+  --output logs/data_acq/app_ring_capture.csv
 ```
 
 On `J-Link PLUS`, SEGGER's model limits and local HSS verification both indicate a 10-symbol ceiling. Do not treat `hss inspect` raw capability word 2 as the symbol-count limit. `hss sample` writes a synchronized wide CSV to `--output` and a metadata sidecar JSON to `--output.meta.json`.
 This HSS path remains J-Link-only. The ST-Link backend in this revision does not provide an equivalent high-rate native sampler.
+For DAPLink / PyOCD, the short board is still host-driven polling. Once a 1 kHz sweep can no longer hold the required float count, move the fast loop to the bundled MCU telemetry ring instead of trying to present host polling as native HSS.
+Latest measured reference on `RSCF_h7` with FanX/Tek DAPLink High at `10 MHz` SWD: a single contiguous `float` reaches about `267 us` average update with `benchmark-float --period-us 0`; the best repeatable stable `1000 Hz` boundary is currently `53 floats / 212 B`; `55 floats` passed once but failed repeatability; the practical end-to-end host-polled path is currently in the `~0.2 MB/s` class, so a real `1 MB/s` target requires an MCU telemetry ring, USB bulk/CDC streaming, or custom probe-side sampling rather than more host-poll tuning.
 
 ## Runtime Profile Contract
 
@@ -230,6 +330,7 @@ python3 BFD-Kit/scripts/migrate_bfd_skills.py --mode cutover
 
 ```bash
 bash BFD-Kit/init_project.sh --help
+python3 BFD-Kit/scripts/bfd_install.py --help
 bash BFD-Kit/scripts/install_python_runtime.sh --help
 python3 BFD-Kit/scripts/bfd_jlink_hss.py --help
 python3 BFD-Kit/scripts/migrate_bfd_skills.py --help

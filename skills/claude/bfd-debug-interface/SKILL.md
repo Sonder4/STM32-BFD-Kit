@@ -48,6 +48,48 @@ RTT note:
 - ST-Link RTT capture should use the independent `bfd-strtt-rtt` skill.
 - Native HSS remains J-Link-only.
 
+## Service Timeout With Missing Upstream Status
+
+If the host can send a service/action request but never sees the expected upstream status packets, do not jump straight into application FSM debugging:
+
+1. Verify whether `SYSTEM_STATUS`, `ODOM`, and other routine upstream packets have stopped globally, not just the service response.
+2. Capture RTT and look for repeated USB warnings such as `W:[usb] tx fail ... status=1`; on STM32 USB CDC this usually means `USBD_BUSY`.
+3. If this signature is present, classify the problem as an upstream transport blockage first.
+4. For firmware that reuses a shared static TX buffer, confirm the USB path serializes senders and waits for `TxState == 0` both before reusing the buffer and after `CDC_Transmit_*()` succeeds.
+
+This check is often faster than instrumenting the service FSM and prevents misdiagnosing a transport stall as a control-plane logic bug.
+
+## Zephyr USB CDC ACM Fault Triage
+
+If a Zephyr firmware only faults after enabling a service that can select different transports, do not immediately blame missing downstream peripherals such as motors or sensors. Isolate the failing path first:
+
+1. Compare `service disabled`, `service enabled + UART forced`, and `service enabled + USB selected`.
+2. If only the USB-selected path faults, treat it as a transport-init problem until disproven.
+3. Capture `CFSR`, current `PC`, and the smallest useful readiness globals such as `s_comm_ready`, `g_is_initialized`, `g_usb_ready`, `g_usb_enabled`, and the selected transport pointer.
+4. On legacy Zephyr USB CDC ACM stacks, avoid writing `DCD/DSR` line-control signals immediately after `usb_enable()`. Prefer plain `usb_enable()` first, then verify host enumeration and `/dev/ttyACM*` payload separately.
+
+This staged isolation is faster and more reliable than starting from a hardware-absence hypothesis.
+
+## Immediate HardFault Right After Flash/Reset
+
+If a freshly flashed STM32 firmware lands in `HardFault_Handler` before you can reach `main`, do not start with business logic. First verify the image and memory layout that actually reached the chip:
+
+1. Read the live vector table at `0x08000000` and compare the initial MSP / reset vector against the ELF `.isr_vector`.
+2. Check the linked `_estack` in the map file against the target's real SRAM topology, not just the copied linker script filename. On STM32F4 migrations, CCM RAM is separate and does not extend the `0x20000000` AHB SRAM window.
+3. Inspect the active link flags in generated build files such as `build.ninja` or `CMakeFiles/CMakeConfigureLog.yaml`; a copied toolchain file can still force `-T STM32F427XX_FLASH.ld` even when a correct `STM32F407XX_FLASH.ld` already exists in the repo.
+4. Only after the live vector table, `_estack`, and linker-script family all match the target MCU should you continue with runtime HardFault triage.
+
+## FreeRTOS Scheduler HardFault Heuristic
+
+If the decoded fault site lands in FreeRTOS internals such as `vListInsertEnd`, `vListInsert`, or `xTaskIncrementTick`, do not assume the kernel is the root cause. First classify whether the list pointers themselves have already been corrupted:
+
+1. Capture `CFSR/HFSR/BFAR/MMFAR` and the stacked fault PC/LR before reset.
+2. If `CFSR` shows `PRECISERR + BFARVALID` and `BFAR` is an obviously invalid application address, treat it as prior memory corruption.
+3. Audit recently executed variadic log calls first, especially `%f` passed to RTT/SEGGER logs, or `%d/%x` accidentally fed with addresses/pointers.
+4. Prioritize hot task loops, delay/error-report paths, and ISR-adjacent logs; on ARM hard-float ABIs, wrong variadic argument types can silently corrupt scheduler/list state and only explode later inside FreeRTOS.
+
+Use the kernel frame as the symptom location and keep tracing outward until you find the application-side memory stomp.
+
 ## Quick Session (5 Steps)
 
 1. Start GDB server.

@@ -4,13 +4,15 @@
 
 BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 它统一了 IOC 识别、运行配置生成、烧录、RTT 日志、寄存器/数据采集和故障证据归档流程。
+English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI agents, `STM32CubeCLT`, and debug probes.
 
 ## 项目说明
 
 - 本项目借助 [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) 对 J-Link 相关流程进行了 CLI 化处理。
 - 当前版本已明确区分 probe 能力边界：ST-Link 支持烧录和 RTT 轮询，但不提供与 J-Link HSS 对等的能力。
-- 当前版本在 Ubuntu 22.04 下使用最佳。
-- Windows 版本尚未完成移植。
+- 当前版本在 Ubuntu 22.04 下验证最充分，但本轮已经补上围绕 `STM32CubeCLT` 的 Windows/Linux 路径统一层。
+- `scripts/bfd_tool_config.py` 与 `scripts/bfd_project_detect.py` 是当前跨平台接入的两个基础入口。
+- 当前版本保留 `Keil` 兼容路径，不再继续扩展 `IAR`。
 
 ## 适用范围
 
@@ -25,9 +27,16 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 - `BFD-Kit/skills/codex/`：Codex 技能源树
 - `BFD-Kit/skills/claude/`：Claude 技能源树
 - `BFD-Kit/resources/stm32/templates/`：芯片族模板（`f4/`、`h7/`）
+- `BFD-Kit/resources/stm32/telemetry_ring/`：`STM32F4` / `STM32H7` 通用 MCU telemetry ring 模板
 - `BFD-Kit/init_project.sh`：一键项目接入入口
+- `BFD-Kit/scripts/bfd_install.py`：跨平台 Python 安装入口，负责复制真源、cutover、工具探测和 profile bootstrap
 - `BFD-Kit/scripts/bfd_jlink_hss.sh`：带本地运行时的原生 J-Link HSS 包装入口
+- `BFD-Kit/scripts/bfd_pyocd_hss.py`：支持 float 数量基准测试的 DAPLink / CMSIS-DAP 固定地址采样脚本
+- `BFD-Kit/scripts/bfd_telemetry_ring.py`：通用 telemetry ring 尺寸计算与 PyOCD 抓取脚本
+- `BFD-Kit/scripts/bfd_tool_config.py`：支持 `STM32CubeCLT` 发现的工作区/全局工具路径配置脚本
+- `BFD-Kit/scripts/bfd_project_detect.py`：识别 `CMake`、`Keil`、`.ioc` 与构建产物的 STM32 工程探测脚本
 - `BFD-Kit/scripts/bfd_stlink_rtt.py`：基于 `STM32_Programmer_CLI` 的轮询式 ST-Link RTT 抓取入口
+- `BFD-Kit/docs/platform_compatibility.md`：Ubuntu/Windows 迁移与工具路径约定
 - `BFD-Kit/.runtime/venv`：按需安装的本地 Python 运行时
 - `BFD-Kit/scripts/migrate_bfd_skills.py`：技能导入/回灌脚本
 - `BFD-Kit/MAINTENANCE-zh.md`：维护者维护清单
@@ -57,12 +66,16 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 
 - `bfd-data-acquisition` 新增通用 `--mode symbol-auto`
 - `bfd-data-acquisition` 新增原生 J-Link HSS CLI，可用于固定地址标量的非阻塞高速采样
+- `bfd-data-acquisition` 新增 DAPLink / PyOCD float 数量基准测试路径，可直接回答“1000Hz 下最多能稳定读多少个 float”
 - `symbol-auto` 通过 `ELF + DWARF` 自动反射全局/静态对象，不再依赖业务对象硬编码
 - DWARF schema 会缓存到 `.codex/bfd/dwarf_cache/`，便于重复采样复用
 - RTT 无有效 payload 时，标准流程明确切换到 RAM 采样，而不是临时拼接 GDB/J-Link 命令
 - `bfd-debug-interface` 与 `bfd-rtt-logger` 已把结构化符号解码默认委托给 `bfd-data-acquisition`
 - `bfd-rtt-logger` 新增基于 `STM32_Programmer_CLI` 的 ST-Link RTT 轮询路径
 - probe 能力边界已显式写清：ST-Link 支持 RTT，但当前没有 HSS 等价路径
+- 现已内置 `STM32F4` / `STM32H7` 通用 MCU telemetry ring 模板，并附带主机侧解码/抓取 CLI
+- `bfd_telemetry_ring.py` 现已支持增量读取新 record，以及 `--field-array prefix:type:count` 的大批量 float 字段展开
+- `bfd_tool_config.py` 与 `bfd_project_detect.py` 已形成当前 `STM32CubeCLT` / `Keil` / 构建产物探测的跨平台基础层
 
 ## Probe 能力边界
 
@@ -95,6 +108,19 @@ BFD-Kit 是一个可移植、CLI 优先的 STM32 AI 调试工具包。
 
 ## 快速初始化
 
+推荐的跨平台入口：
+
+```bash
+# 复制 BFD-Kit 到目标 STM32 工程，并完成 active mirror 更新、宿主机工具探测和 profile bootstrap
+python3 BFD-Kit/scripts/bfd_install.py \
+  --project-root /path/to/your/stm32-project \
+  --detect-tools \
+  --bootstrap-profile
+
+# 后续查看当前安装状态
+python3 BFD-Kit/scripts/bfd_install.py --project-root /path/to/your/stm32-project --status
+```
+
 ```bash
 # 一条命令完成技能接入/更新、刷新 .codex/bfd 运行配置，并准备本地 Python 运行时
 bash BFD-Kit/init_project.sh --project-root .
@@ -104,6 +130,26 @@ bash BFD-Kit/init_project.sh --project-root . --cutover-only
 bash BFD-Kit/init_project.sh --project-root . --bootstrap-only --force-refresh
 bash BFD-Kit/init_project.sh --project-root . --runtime-only
 ```
+
+## 跨平台配置
+
+```bash
+# 识别当前宿主机常用工具，并写入目标工作区
+python3 BFD-Kit/scripts/bfd_tool_config.py detect --write --workspace .
+
+# 查看当前工作区持久化后的工具路径
+python3 BFD-Kit/scripts/bfd_tool_config.py list --workspace .
+
+# 从 .ioc / CMake / Keil 产物识别当前 STM32 工程画像
+python3 BFD-Kit/scripts/bfd_project_detect.py --workspace . --json
+```
+
+补充说明：
+
+- Ubuntu/Windows 迁移说明统一写在 `BFD-Kit/docs/platform_compatibility.md`
+- 推荐统一使用 `STM32CubeCLT`
+- `Keil` 保留兼容，`IAR` 不再扩展
+- 若不方便依赖 Bash，优先使用 `scripts/bfd_install.py` 作为 Windows/Linux 通用接入入口
 
 ## 标准流程
 
@@ -145,6 +191,32 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
   --duration 0.3 \
   --period-us 1000 \
   --output logs/data_acq/imu_yaw_pitch_hss.csv
+
+# 3.7) 若使用 DAPLink / CMSIS-DAP，先直接 benchmark 连续 float 读取上限
+RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_pyocd_hss.py --json benchmark-float \
+  --address 0x200096E8 \
+  --min-floats 1 \
+  --max-floats 32 \
+  --target stm32h723xx \
+  --uid 6d1395736d13957301 \
+  --frequency 10000000 \
+  --duration 0.2 \
+  --period-us 1000 \
+  --output logs/data_acq/pyocd_float_benchmark.json
+
+# 3.8) 若 host 轮询已经成为瓶颈，则把高速路径收敛到 MCU telemetry ring
+RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_telemetry_ring.py --json capture-pyocd \
+  --address 0x24020000 \
+  --field pos_rad:f32 \
+  --field vel_rads:f32 \
+  --field torque_nm:f32 \
+  --field state:u32 \
+  --target stm32h723xx \
+  --uid 6d1395736d13957301 \
+  --frequency 10000000 \
+  --duration 1.0 \
+  --poll-period-us 1000 \
+  --output logs/data_acq/app_ring_capture.csv
 
 # 4) 一次性调试会话
 ./build_tools/jlink/debug.sh | tee logs/debug/debug_$(date +%Y%m%d_%H%M%S).log
@@ -189,6 +261,8 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
 
 对 `J-Link PLUS`，SEGGER 官方型号限制和本地 HSS 实测都表明上限是 10 个 symbol。不要把 `hss inspect` 返回的原始 capability 第 3 个 word 当作 symbol 数量上限。`hss sample` 会把同步宽表 CSV 写到 `--output`，并额外生成 `--output.meta.json` 元数据文件。
 这条 HSS 路径仍然只适用于 J-Link；当前版本的 ST-Link 后端不提供对等的高速原生采样能力。
+对 DAPLink / PyOCD，当前短板仍然是 host 轮询。若 1kHz sweep 已经无法容纳目标 float 数量，就不要再把 host polling 描述成“等价 HSS”，而应切换到当前内置的 MCU telemetry ring。
+当前在 `RSCF_h7 + FanX/Tek DAPLink High + 10 MHz SWD` 上的最新实测可作为保守参考：`benchmark-float --period-us 0` 下，单个连续 `float` 的平均最快更新约 `267 us`；可重复稳定的 `1000 Hz` 边界目前是 `53 floats / 212 B`；`55 floats` 虽曾单次通过，但 repeat 失败，不应作为正式能力；当前 host-polled 端到端实测量级约为 `0.2 MB/s`，因此若目标是真正的 `1 MB/s`，应转向 `MCU telemetry ring`、`USB bulk/CDC` 或自定义 probe-side sampling，而不是继续微调 host 轮询。
 
 ## 运行配置约定
 
@@ -230,6 +304,7 @@ python3 BFD-Kit/scripts/migrate_bfd_skills.py --mode cutover
 
 ```bash
 bash BFD-Kit/init_project.sh --help
+python3 BFD-Kit/scripts/bfd_install.py --help
 bash BFD-Kit/scripts/install_python_runtime.sh --help
 python3 BFD-Kit/scripts/bfd_jlink_hss.py --help
 python3 BFD-Kit/scripts/migrate_bfd_skills.py --help
