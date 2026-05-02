@@ -11,7 +11,7 @@ English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI ag
 - 本项目借助 [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) 对 J-Link 相关流程进行了 CLI 化处理。
 - 当前版本已明确区分 probe 能力边界：ST-Link 支持烧录和 RTT 轮询，但不提供与 J-Link HSS 对等的能力。
 - 当前版本在 Ubuntu 22.04 下验证最充分，但本轮已经补上围绕 `STM32CubeCLT` 的 Windows/Linux 路径统一层。
-- `scripts/bfd_tool_config.py` 与 `scripts/bfd_project_detect.py` 是当前跨平台接入的两个基础入口。
+- `scripts/bfd_tool_config.py`、`scripts/bfd_project_detect.py` 与 `scripts/bfd_cubeclt_build.py` 现在组成了跨平台入口链，分别负责工具发现、工程画像和统一 `STM32CubeCLT` 构建校验。
 - 当前版本保留 `Keil` 兼容路径，不再继续扩展 `IAR`。
 
 ## 适用范围
@@ -35,8 +35,11 @@ English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI ag
 - `BFD-Kit/scripts/bfd_telemetry_ring.py`：通用 telemetry ring 尺寸计算与 PyOCD 抓取脚本
 - `BFD-Kit/scripts/bfd_tool_config.py`：支持 `STM32CubeCLT` 发现的工作区/全局工具路径配置脚本
 - `BFD-Kit/scripts/bfd_project_detect.py`：识别 `CMake`、`Keil`、`.ioc` 与构建产物的 STM32 工程探测脚本
+- `BFD-Kit/scripts/bfd_cubeclt_build.py`：面向 `STM32CubeCLT` 的 CMake configure/build/dry-run 包装器，并校验 `elf/hex/bin` 一致性
+- `BFD-Kit/scripts/bfd_repo_validate.py`：同步或发布前的仓库自检脚本
 - `BFD-Kit/scripts/bfd_stlink_rtt.py`：基于 `STM32_Programmer_CLI` 的轮询式 ST-Link RTT 抓取入口
 - `BFD-Kit/docs/platform_compatibility.md`：Ubuntu/Windows 迁移与工具路径约定
+- `BFD-Kit/docs/embed_ai_tool_mapping.md`：`embed-ai-tool` 吸收项/拒绝项与收敛说明
 - `BFD-Kit/.runtime/venv`：按需安装的本地 Python 运行时
 - `BFD-Kit/scripts/migrate_bfd_skills.py`：技能导入/回灌脚本
 - `BFD-Kit/MAINTENANCE-zh.md`：维护者维护清单
@@ -54,6 +57,7 @@ English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI ag
 - `bfd-debug-executor`：一次性 J-Link 命令执行
 - `bfd-register-capture`：外设寄存器采样与导出
 - `bfd-data-acquisition`：运行时数据采集与分析
+- `bfd-matlab-mcd`：Matlab / Simulink / System Identification / MCD 闭环工作流
 - `bfd-fault-logger`：HardFault/BusFault/UsageFault 归档
 - `bfd-debug-orchestrator`：端到端调试编排
 - `bfd-user-feedback`：用户反馈与状态回传
@@ -76,6 +80,8 @@ English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI ag
 - 现已内置 `STM32F4` / `STM32H7` 通用 MCU telemetry ring 模板，并附带主机侧解码/抓取 CLI
 - `bfd_telemetry_ring.py` 现已支持增量读取新 record，以及 `--field-array prefix:type:count` 的大批量 float 字段展开
 - `bfd_tool_config.py` 与 `bfd_project_detect.py` 已形成当前 `STM32CubeCLT` / `Keil` / 构建产物探测的跨平台基础层
+- `bfd_cubeclt_build.py` 已把这层基础能力继续收敛成 Ubuntu/Windows 共用的 configure/build/dry-run/verify 包装器
+- `bfd_repo_validate.py` 已提供同步和 GitHub 发布前的轻量级仓库门禁
 
 ## Probe 能力边界
 
@@ -137,11 +143,23 @@ bash BFD-Kit/init_project.sh --project-root . --runtime-only
 # 识别当前宿主机常用工具，并写入目标工作区
 python3 BFD-Kit/scripts/bfd_tool_config.py detect --write --workspace .
 
+# 在配置项和自动探测之间解析当前有效工具路径
+python3 BFD-Kit/scripts/bfd_tool_config.py resolve cmake --workspace .
+
 # 查看当前工作区持久化后的工具路径
 python3 BFD-Kit/scripts/bfd_tool_config.py list --workspace .
 
 # 从 .ioc / CMake / Keil 产物识别当前 STM32 工程画像
 python3 BFD-Kit/scripts/bfd_project_detect.py --workspace . --json
+
+# 检查统一 CubeCLT 构建链和 elf/hex/bin 产物状态
+python3 BFD-Kit/scripts/bfd_cubeclt_build.py --json inspect --workspace . --preset Debug --require-triplet
+
+# 在 Ubuntu/Windows 迁移前先做一次统一 configure/build dry-run
+python3 BFD-Kit/scripts/bfd_cubeclt_build.py --json build --workspace . --preset Debug --configure-if-needed --require-triplet --dry-run
+
+# 同步或发布前对 BFD-Kit 真源做仓库自检
+python3 BFD-Kit/scripts/bfd_repo_validate.py --root BFD-Kit
 ```
 
 补充说明：
@@ -150,6 +168,7 @@ python3 BFD-Kit/scripts/bfd_project_detect.py --workspace . --json
 - 推荐统一使用 `STM32CubeCLT`
 - `Keil` 保留兼容，`IAR` 不再扩展
 - 若不方便依赖 Bash，优先使用 `scripts/bfd_install.py` 作为 Windows/Linux 通用接入入口
+- 如果要证明当前宿主机仍能正确导出预期 `elf/hex/bin`，优先跑 `bfd_cubeclt_build.py`
 
 ## 标准流程
 
@@ -262,7 +281,7 @@ bash BFD-Kit/scripts/bfd_jlink_hss.sh --json hss sample \
 对 `J-Link PLUS`，SEGGER 官方型号限制和本地 HSS 实测都表明上限是 10 个 symbol。不要把 `hss inspect` 返回的原始 capability 第 3 个 word 当作 symbol 数量上限。`hss sample` 会把同步宽表 CSV 写到 `--output`，并额外生成 `--output.meta.json` 元数据文件。
 这条 HSS 路径仍然只适用于 J-Link；当前版本的 ST-Link 后端不提供对等的高速原生采样能力。
 对 DAPLink / PyOCD，当前短板仍然是 host 轮询。若 1kHz sweep 已经无法容纳目标 float 数量，就不要再把 host polling 描述成“等价 HSS”，而应切换到当前内置的 MCU telemetry ring。
-当前在 `RSCF_h7 + FanX/Tek DAPLink High + 10 MHz SWD` 上的最新实测可作为保守参考：`benchmark-float --period-us 0` 下，单个连续 `float` 的平均最快更新约 `267 us`；可重复稳定的 `1000 Hz` 边界目前是 `53 floats / 212 B`；`55 floats` 虽曾单次通过，但 repeat 失败，不应作为正式能力；当前 host-polled 端到端实测量级约为 `0.2 MB/s`，因此若目标是真正的 `1 MB/s`，应转向 `MCU telemetry ring`、`USB bulk/CDC` 或自定义 probe-side sampling，而不是继续微调 host 轮询。
+当前在 `RSCF_h7 + FanX/Tek DAPLink High + 10 MHz SWD` 上的同日复测显示：`benchmark-float --period-us 0` 下，单个连续 `float` 的平均最快更新约 `126 us`；`1000 Hz` 边界的实测窗口约落在 `64-67 floats / 256-268 B`，但由于 host-polled 抖动在边界附近并非单调，建议仍以 `64 floats` 作为保守规划值；当前 host-polled 端到端实测量级仍约为 `0.2-0.26 MB/s`，因此若目标是真正的 `1 MB/s`，仍应转向 `MCU telemetry ring`、`USB bulk/CDC` 或自定义 probe-side sampling，而不是继续微调 host 轮询。
 
 ## 运行配置约定
 

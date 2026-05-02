@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -89,3 +90,88 @@ def test_project_detect_cli_writes_json_profile(tmp_path):
     profile = json.loads(output_path.read_text(encoding="utf-8"))
     assert profile["toolchain"] == "stm32cubeclt"
     assert profile["stm32_family"] == "f4"
+
+
+def test_detect_project_includes_cmake_presets_and_artifact_bundles(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "CMakeLists.txt").write_text("project(test)\n", encoding="utf-8")
+    (workspace / "board.ioc").write_text("ProjectManager.TargetToolchain=STM32CubeCLT\nMcu.Name=STM32H723ZGTx\n", encoding="utf-8")
+    (workspace / "CMakePresets.json").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "configurePresets": [
+                    {
+                        "name": "Debug",
+                        "generator": "Ninja",
+                        "binaryDir": "${sourceDir}/builds/gcc/debug",
+                    }
+                ],
+                "buildPresets": [
+                    {
+                        "name": "Debug",
+                        "configurePreset": "Debug",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    build_dir = workspace / "builds" / "gcc" / "debug"
+    build_dir.mkdir(parents=True)
+    (build_dir / "demo.elf").write_text("elf\n", encoding="utf-8")
+    (build_dir / "demo.hex").write_text("hex\n", encoding="utf-8")
+    (build_dir / "demo.bin").write_text("bin\n", encoding="utf-8")
+
+    profile = MODULE.detect_project(workspace)
+
+    assert profile["cmake_presets"]["configure"][0]["name"] == "Debug"
+    assert profile["cmake_presets"]["configure"][0]["binaryDir"].endswith("/builds/gcc/debug")
+    assert profile["build_directories"][0].endswith("/builds/gcc/debug")
+    assert profile["artifact_bundles"][0]["base_name"] == "demo"
+    assert profile["artifact_bundles"][0]["triplet_ready"] is True
+    assert profile["artifact_bundles"][0]["stale_kinds"] == []
+
+
+def test_detect_project_marks_stale_hex_and_missing_bin(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "CMakeLists.txt").write_text("project(test)\n", encoding="utf-8")
+    build_dir = workspace / "build"
+    build_dir.mkdir()
+    elf_path = build_dir / "app.elf"
+    hex_path = build_dir / "app.hex"
+    elf_path.write_text("elf-new\n", encoding="utf-8")
+    hex_path.write_text("hex-old\n", encoding="utf-8")
+    elf_path.write_text("elf-newer\n", encoding="utf-8")
+    os.utime(hex_path, (10, 10))
+    os.utime(elf_path, (20, 20))
+
+    profile = MODULE.detect_project(workspace)
+
+    bundle = profile["artifact_bundles"][0]
+    assert bundle["base_name"] == "app"
+    assert bundle["triplet_ready"] is False
+    assert bundle["missing_kinds"] == ["bin"]
+    assert "hex" in bundle["stale_kinds"]
+
+
+def test_detect_project_ignores_cmake_internal_artifacts(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "CMakeLists.txt").write_text("project(test)\n", encoding="utf-8")
+    build_dir = workspace / "builds" / "gcc" / "debug"
+    internal_dir = build_dir / "CMakeFiles" / "3.28.1"
+    internal_dir.mkdir(parents=True)
+    (internal_dir / "CMakeDetermineCompilerABI_C.bin").write_text("bin\n", encoding="utf-8")
+    (build_dir / "demo.elf").write_text("elf\n", encoding="utf-8")
+    (build_dir / "demo.hex").write_text("hex\n", encoding="utf-8")
+    (build_dir / "demo.bin").write_text("bin\n", encoding="utf-8")
+
+    profile = MODULE.detect_project(workspace)
+
+    assert all("CMakeDetermineCompilerABI_C.bin" not in item for item in profile["artifact_candidates"])
+    assert len(profile["artifact_bundles"]) == 1
+    assert profile["artifact_bundles"][0]["base_name"] == "demo"

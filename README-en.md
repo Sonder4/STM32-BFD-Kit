@@ -13,7 +13,7 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - This project also leverages [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) to handle J-Link related workflows through a CLI-first path.
 - Probe capability boundaries are explicit in this revision: ST-Link supports flash and polling-based RTT, but does not provide a native HSS-equivalent path.
 - The toolkit still validates fastest on Ubuntu 22.04, but this revision also adds Windows/Linux path normalization around `STM32CubeCLT`.
-- `scripts/bfd_tool_config.py` and `scripts/bfd_project_detect.py` are the new cross-platform entry points for host tool discovery and STM32 project profiling.
+- `scripts/bfd_tool_config.py`, `scripts/bfd_project_detect.py`, and `scripts/bfd_cubeclt_build.py` now form the cross-platform entry path for host tool discovery, STM32 project profiling, and shared `STM32CubeCLT` build verification.
 - `Keil` compatibility is retained; `IAR` is intentionally not carried forward in this repository revision.
 
 ## Scope
@@ -37,8 +37,11 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - `scripts/bfd_telemetry_ring.py`: generic telemetry-ring sizing and PyOCD capture utility
 - `scripts/bfd_tool_config.py`: workspace/global tool-path registry with `STM32CubeCLT` discovery
 - `scripts/bfd_project_detect.py`: STM32 project metadata detector for `CMake`, `Keil`, `.ioc`, and artifact candidates
+- `scripts/bfd_cubeclt_build.py`: `STM32CubeCLT`-oriented CMake configure/build/dry-run wrapper with `elf/hex/bin` bundle verification
+- `scripts/bfd_repo_validate.py`: repository self-check before sync or publish
 - `scripts/bfd_stlink_rtt.py`: polling-based ST-Link RTT capture built on `STM32_Programmer_CLI`
 - `docs/platform_compatibility.md`: Ubuntu/Windows migration notes and tool-path conventions
+- `docs/embed_ai_tool_mapping.md`: absorbed vs. rejected `embed-ai-tool` capabilities and convergence notes
 - `.runtime/venv`: local Python runtime installed on demand
 - `scripts/migrate_bfd_skills.py`: import / cutover utility
 - `STM32_AGENT_PROMPT-zh.md`: Chinese STM32 agent prompt reference
@@ -56,6 +59,7 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - `bfd-debug-executor`: one-shot J-Link command execution
 - `bfd-register-capture`: peripheral register sampling and export
 - `bfd-data-acquisition`: runtime data capture and analysis
+- `bfd-matlab-mcd`: closed-loop Matlab/Simulink/System Identification/MCD workflow
 - `bfd-fault-logger`: HardFault / BusFault / UsageFault archival
 - `bfd-debug-orchestrator`: end-to-end debug campaign orchestration
 - `bfd-user-feedback`: user-facing status and feedback hooks
@@ -108,11 +112,23 @@ bash ./init_project.sh --project-root /path/to/your/stm32-project --runtime-only
 # Detect common host tools and persist them into the target workspace
 python3 ./scripts/bfd_tool_config.py detect --write --workspace /path/to/your/stm32-project
 
+# Resolve the effective tool path after config + auto-detect fallback
+python3 ./scripts/bfd_tool_config.py resolve cmake --workspace /path/to/your/stm32-project
+
 # Review the persisted tool map
 python3 ./scripts/bfd_tool_config.py list --workspace /path/to/your/stm32-project
 
 # Detect the active STM32 project profile from .ioc / CMake / Keil artifacts
 python3 ./scripts/bfd_project_detect.py --workspace /path/to/your/stm32-project --json
+
+# Inspect the shared CubeCLT build lane and artifact bundle status
+python3 ./scripts/bfd_cubeclt_build.py --json inspect --workspace /path/to/your/stm32-project --preset Debug --require-triplet
+
+# Dry-run the unified configure/build lane before moving between Ubuntu and Windows
+python3 ./scripts/bfd_cubeclt_build.py --json build --workspace /path/to/your/stm32-project --preset Debug --configure-if-needed --require-triplet --dry-run
+
+# Validate the BFD-Kit source tree before sync or publish
+python3 ./scripts/bfd_repo_validate.py --root .
 ```
 
 Platform notes:
@@ -121,6 +137,7 @@ Platform notes:
 - `STM32CubeCLT` is the preferred shared toolchain lane
 - `Keil` stays supported for compatibility; `IAR` does not
 - `scripts/bfd_install.py` is the preferred Windows/Linux bootstrap entry when a Bash-first flow is inconvenient
+- `bfd_cubeclt_build.py` is the preferred cross-platform preflight when you need to prove the current host can still configure/build/export the expected `elf/hex/bin` bundle
 
 ## Standard Workflow
 
@@ -189,7 +206,7 @@ RSCF_h7/.tools/pyocd-venv/bin/python BFD-Kit/scripts/bfd_telemetry_ring.py --jso
 On `J-Link PLUS`, SEGGER's model limits and local HSS verification both indicate a 10-symbol ceiling. Do not treat `hss inspect` raw capability word 2 as the symbol-count limit. The native sampler writes a synchronized wide CSV to `--output` and a metadata sidecar JSON to `--output.meta.json`.
 This HSS path remains J-Link-only. The ST-Link backend in this revision does not provide an equivalent native high-rate sampler.
 For DAPLink / PyOCD, the short board is still host-driven polling. Once a 1 kHz sweep can no longer hold the required float count, move the fast loop to the bundled MCU telemetry ring instead of describing host polling as native HSS.
-Latest measured reference on `RSCF_h7` with FanX/Tek DAPLink High at `10 MHz` SWD: a single contiguous `float` reaches about `267 us` average update with `benchmark-float --period-us 0`; the best repeatable stable `1000 Hz` boundary is currently `53 floats / 212 B`; `55 floats` passed once but failed repeatability; the practical end-to-end host-polled path is currently in the `~0.2 MB/s` class, so a real `1 MB/s` target requires an MCU telemetry ring, USB bulk/CDC streaming, or custom probe-side sampling rather than more host-poll tuning.
+Latest measured reference on `RSCF_h7` with FanX/Tek DAPLink High at `10 MHz` SWD: a same-day recheck now reaches about `126 us` average update for one contiguous `float` with `benchmark-float --period-us 0`, and the observed stable `1000 Hz` window lands around `64-67 floats / 256-268 B`; keep `64 floats` as the conservative planning number because host-polled jitter is still non-monotonic near the edge. The practical end-to-end host-polled path remains in the `~0.2-0.26 MB/s` class, so a real `1 MB/s` target still requires an MCU telemetry ring, USB bulk/CDC streaming, or custom probe-side sampling rather than more host-poll tuning.
 
 ## Runtime Profile Contract
 
@@ -244,3 +261,5 @@ If you extend the toolkit with new STM32 debug, flashing, data acquisition, or C
 - a reusable MCU telemetry-ring template is now bundled for `STM32F4` and `STM32H7`, together with a host-side decoder/capture CLI
 - `bfd_telemetry_ring.py` now supports incremental ring-record reads and `--field-array prefix:type:count` for large float payload benchmarks
 - `bfd_tool_config.py` and `bfd_project_detect.py` now provide the cross-platform base layer for `STM32CubeCLT`, `Keil`, and artifact detection
+- `bfd_cubeclt_build.py` now turns that base layer into a reusable configure/build/dry-run/verify wrapper for shared Ubuntu/Windows workflows
+- `bfd_repo_validate.py` now provides a lightweight repository gate before sync or GitHub publishing

@@ -15,13 +15,19 @@ BFD-Kit keeps one STM32 workflow across Ubuntu and Windows hosts by normalizing 
   - Detect common executables from `PATH` and `STM32CubeCLT`
 - `scripts/bfd_project_detect.py`
   - Detect build system, toolchain, target MCU, STM32 family, `.ioc`, and artifact candidates
+- `scripts/bfd_cubeclt_build.py`
+  - Reuse the detected toolchain lane for CMake configure/build/dry-run
+  - Verify `elf/hex/bin` bundle completeness and freshness
+- `scripts/bfd_repo_validate.py`
+  - Gate the BFD-Kit source tree before sync or publish
 
 Recommended bootstrap order:
 
 1. Detect tool paths on the current host
 2. Persist any host-specific overrides
 3. Detect the target STM32 project
-4. Build or flash with the detected profile
+4. Verify the shared CubeCLT build lane and artifact bundle
+5. Build or flash with the detected profile
 
 Preferred bootstrap command when moving between Ubuntu and Windows:
 
@@ -80,6 +86,7 @@ Detect tools from the current host:
 
 ```bash
 python3 scripts/bfd_tool_config.py detect --write --workspace /path/to/project
+python3 scripts/bfd_tool_config.py resolve cmake --workspace /path/to/project
 ```
 
 Inspect persisted tool paths:
@@ -93,6 +100,9 @@ Detect a project profile:
 
 ```bash
 python3 scripts/bfd_project_detect.py --workspace /path/to/project --json
+python3 scripts/bfd_cubeclt_build.py --json inspect --workspace /path/to/project --preset Debug --require-triplet
+python3 scripts/bfd_cubeclt_build.py --json build --workspace /path/to/project --preset Debug --configure-if-needed --require-triplet --dry-run
+python3 scripts/bfd_repo_validate.py --root /path/to/BFD-Kit
 ```
 
 ## Ubuntu -> Windows Migration Checklist
@@ -107,6 +117,7 @@ When moving an STM32 project from Ubuntu to Windows, check these items in order:
 6. Re-check path case sensitivity; Windows may hide collisions that Linux exposed
 7. Confirm `cmake` and `ninja` come from the intended `STM32CubeCLT` installation
 8. Re-check serial port names and probe-driver binding on Windows
+9. Re-run `bfd_cubeclt_build.py --json inspect --require-triplet` and confirm the expected `elf/hex/bin` bundle is still complete and fresh
 
 Common build breaks to audit early:
 

@@ -26,6 +26,7 @@ TOOL_CANDIDATES = {
     "ninja": ["ninja"],
     "arm_none_eabi_gcc": ["arm-none-eabi-gcc"],
     "arm_none_eabi_gdb": ["arm-none-eabi-gdb"],
+    "arm_none_eabi_objcopy": ["arm-none-eabi-objcopy"],
     "pyocd": ["pyocd"],
     "openocd": ["openocd"],
     "jlink_exe": ["JLinkExe", "JLink.exe"],
@@ -33,6 +34,32 @@ TOOL_CANDIDATES = {
     "stm32cubeprogrammer_cli": ["STM32_Programmer_CLI", "STM32_Programmer_CLI.exe"],
     "stlink_gdb_server": ["ST-LINK_gdbserver", "ST-LINK_gdbserver.exe"],
     "keil_uv4": ["UV4", "UV4.exe"],
+}
+
+CUBECLT_RELATIVE_TOOL_PATHS = {
+    "linux": {
+        "cmake": ["CMake/bin/cmake"],
+        "ninja": ["Ninja/bin/ninja"],
+        "arm_none_eabi_gcc": ["GNU-tools-for-STM32/bin/arm-none-eabi-gcc"],
+        "arm_none_eabi_gdb": ["GNU-tools-for-STM32/bin/arm-none-eabi-gdb"],
+        "arm_none_eabi_objcopy": ["GNU-tools-for-STM32/bin/arm-none-eabi-objcopy"],
+        "stm32cubeprogrammer_cli": ["STM32CubeProgrammer/bin/STM32_Programmer_CLI"],
+        "stlink_gdb_server": ["STLink-gdb-server/bin/ST-LINK_gdbserver"],
+    },
+    "windows": {
+        "cmake": ["CMake/bin/cmake.exe"],
+        "ninja": ["Ninja/bin/ninja.exe"],
+        "arm_none_eabi_gcc": ["GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe"],
+        "arm_none_eabi_gdb": ["GNU-tools-for-STM32/bin/arm-none-eabi-gdb.exe"],
+        "arm_none_eabi_objcopy": ["GNU-tools-for-STM32/bin/arm-none-eabi-objcopy.exe"],
+        "stm32cubeprogrammer_cli": ["STM32CubeProgrammer/bin/STM32_Programmer_CLI.exe"],
+        "stlink_gdb_server": ["STLink-gdb-server/bin/ST-LINK_gdbserver.exe"],
+    },
+}
+
+CUBECLT_TOOL_BASENAMES = {
+    "jlink_exe": ["JLink.exe", "JLinkExe"],
+    "jlink_gdb_server": ["JLinkGDBServerCL.exe", "JLinkGDBServerCLExe"],
 }
 
 
@@ -145,7 +172,39 @@ def _cubeclt_root_candidates(host_os: str) -> list[Path]:
     env_root = os.environ.get("STM32CUBECLT_ROOT")
     if env_root:
         roots = [env_root, *roots]
-    return [Path(item) for item in roots]
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for item in roots:
+        base = Path(item).expanduser()
+        for candidate in [base, *sorted(base.parent.glob(f"{base.name}*"))]:
+            normalized = candidate.expanduser()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            candidates.append(normalized)
+    return candidates
+
+
+def _resolve_existing_path(path: Path) -> Path | None:
+    expanded = path.expanduser()
+    if expanded.is_file():
+        return expanded.resolve()
+    return None
+
+
+def _find_cubeclt_tool(root: Path, tool_name: str, host_os: str) -> Path | None:
+    for relative_path in CUBECLT_RELATIVE_TOOL_PATHS.get(host_os, {}).get(tool_name, []):
+        resolved = _resolve_existing_path(root / relative_path)
+        if resolved is not None:
+            return resolved
+
+    for basename in CUBECLT_TOOL_BASENAMES.get(tool_name, []):
+        matches = sorted(root.rglob(basename))
+        for candidate in matches:
+            resolved = _resolve_existing_path(candidate)
+            if resolved is not None:
+                return resolved
+    return None
 
 
 def detect_default_tools(*, host_os: str | None = None) -> dict[str, str]:
@@ -160,22 +219,39 @@ def detect_default_tools(*, host_os: str | None = None) -> dict[str, str]:
     for root in _cubeclt_root_candidates(normalized):
         if root.is_dir():
             found.setdefault("stm32cubeclt_root", str(root))
-            programmer = root / "STM32CubeProgrammer" / "bin" / ("STM32_Programmer_CLI.exe" if normalized == "windows" else "STM32_Programmer_CLI")
-            if programmer.is_file():
-                found.setdefault("stm32cubeprogrammer_cli", str(programmer))
-            stlink = root / "STLink-gdb-server" / "bin" / ("ST-LINK_gdbserver.exe" if normalized == "windows" else "ST-LINK_gdbserver")
-            if stlink.is_file():
-                found.setdefault("stlink_gdb_server", str(stlink))
-            segger = root / "Segger"
-            if segger.is_dir():
-                jlink_exe = next(segger.rglob("JLink.exe" if normalized == "windows" else "JLinkExe"), None)
-                if jlink_exe and jlink_exe.is_file():
-                    found.setdefault("jlink_exe", str(jlink_exe))
-                jlink_gdb = next(segger.rglob("JLinkGDBServerCL.exe" if normalized == "windows" else "JLinkGDBServerCLExe"), None)
-                if jlink_gdb and jlink_gdb.is_file():
-                    found.setdefault("jlink_gdb_server", str(jlink_gdb))
+            for tool_name in (
+                "cmake",
+                "ninja",
+                "arm_none_eabi_gcc",
+                "arm_none_eabi_gdb",
+                "arm_none_eabi_objcopy",
+                "stm32cubeprogrammer_cli",
+                "stlink_gdb_server",
+                "jlink_exe",
+                "jlink_gdb_server",
+            ):
+                tool_path = _find_cubeclt_tool(root, tool_name, normalized)
+                if tool_path is not None:
+                    found.setdefault(tool_name, str(tool_path))
             break
     return found
+
+
+def resolve_tool_path(
+    tool: str,
+    *,
+    workspace: str | Path | None = None,
+    home: str | Path | None = None,
+    host_os: str | None = None,
+) -> str | None:
+    configured = get_tool_path(tool, workspace=workspace, home=home)
+    if configured:
+        configured_path = Path(configured).expanduser()
+        if configured_path.is_file():
+            return str(configured_path.resolve())
+        return str(configured_path)
+    detected = detect_default_tools(host_os=host_os)
+    return detected.get(tool)
 
 
 def _cmd_set(args: argparse.Namespace) -> int:
@@ -191,6 +267,14 @@ def _cmd_set(args: argparse.Namespace) -> int:
 
 def _cmd_get(args: argparse.Namespace) -> int:
     path = get_tool_path(args.tool, workspace=args.workspace)
+    if path is None:
+        return 1
+    print(path)
+    return 0
+
+
+def _cmd_resolve(args: argparse.Namespace) -> int:
+    path = resolve_tool_path(args.tool, workspace=args.workspace, host_os=args.host_os)
     if path is None:
         return 1
     print(path)
@@ -239,6 +323,11 @@ def build_parser() -> argparse.ArgumentParser:
     get_parser.add_argument("tool")
     get_parser.add_argument("--workspace")
 
+    resolve_parser = subparsers.add_parser("resolve", help="Resolve a tool path from config or host detection")
+    resolve_parser.add_argument("tool")
+    resolve_parser.add_argument("--workspace")
+    resolve_parser.add_argument("--host-os", choices=["linux", "macos", "windows"])
+
     list_parser = subparsers.add_parser("list", help="List configured tools")
     list_parser.add_argument("--workspace")
 
@@ -268,6 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch = {
         "set": _cmd_set,
         "get": _cmd_get,
+        "resolve": _cmd_resolve,
         "list": _cmd_list,
         "remove": _cmd_remove,
         "path": _cmd_path,
