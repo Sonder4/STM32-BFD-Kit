@@ -41,6 +41,7 @@ This project contains STM32 Skills developed by NCU Roboteam during work with th
 - `scripts/bfd_repo_validate.py`: repository self-check before sync or publish
 - `scripts/bfd_stlink_rtt.py`: polling-based ST-Link RTT capture built on `STM32_Programmer_CLI`
 - `docs/platform_compatibility.md`: Ubuntu/Windows migration notes and tool-path conventions
+- `docs/platform_validation_2026-05-02.md`: latest Ubuntu actual validation plus Windows static coverage record
 - `docs/embed_ai_tool_mapping.md`: absorbed vs. rejected `embed-ai-tool` capabilities and convergence notes
 - `.runtime/venv`: local Python runtime installed on demand
 - `scripts/migrate_bfd_skills.py`: import / cutover utility

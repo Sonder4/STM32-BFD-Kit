@@ -39,6 +39,7 @@ English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI ag
 - `BFD-Kit/scripts/bfd_repo_validate.py`：同步或发布前的仓库自检脚本
 - `BFD-Kit/scripts/bfd_stlink_rtt.py`：基于 `STM32_Programmer_CLI` 的轮询式 ST-Link RTT 抓取入口
 - `BFD-Kit/docs/platform_compatibility.md`：Ubuntu/Windows 迁移与工具路径约定
+- `BFD-Kit/docs/platform_validation_2026-05-02.md`：最新 Ubuntu 实测与 Windows 静态覆盖验证记录
 - `BFD-Kit/docs/embed_ai_tool_mapping.md`：`embed-ai-tool` 吸收项/拒绝项与收敛说明
 - `BFD-Kit/.runtime/venv`：按需安装的本地 Python 运行时
 - `BFD-Kit/scripts/migrate_bfd_skills.py`：技能导入/回灌脚本

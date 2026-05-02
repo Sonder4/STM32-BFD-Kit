@@ -70,3 +70,35 @@ def test_verify_artifact_bundles_reports_missing_triplet():
 
     assert report["ok"] is False
     assert "missing bin" in report["messages"][0]
+
+
+def test_build_commands_preserve_resolved_cmake_exe_path(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "CMakePresets.json").write_text(
+        """
+{
+  "version": 3,
+  "configurePresets": [
+    {"name": "Debug", "generator": "Ninja", "binaryDir": "${sourceDir}/build/debug"}
+  ],
+  "buildPresets": [
+    {"name": "Debug", "configurePreset": "Debug"}
+  ]
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    tool_paths = {
+        "cmake": str(tmp_path / "STM32CubeCLT" / "CMake" / "bin" / "cmake.exe"),
+        "ninja": str(tmp_path / "STM32CubeCLT" / "Ninja" / "bin" / "ninja.exe"),
+    }
+    configure_command, _ = MODULE.build_configure_command(workspace, tool_paths, preset_name="Debug", binary_dir=None, toolchain_file=None)
+    build_command, _ = MODULE.build_build_command(workspace, tool_paths, preset_name="Debug", binary_dir=None, target=None, jobs=None)
+
+    assert configure_command[0].endswith("cmake.exe")
+    assert configure_command[1:] == ["--preset", "Debug"]
+    assert build_command[0].endswith("cmake.exe")
+    assert build_command[1:] == ["--build", "--preset", "Debug"]

@@ -126,3 +126,50 @@ def test_detect_default_tools_accepts_versioned_cubeclt_root(tmp_path, monkeypat
 
     assert detected["stm32cubeclt_root"] == str(versioned_root)
     assert detected["stm32cubeprogrammer_cli"].endswith("/STM32CubeProgrammer/bin/STM32_Programmer_CLI")
+
+
+def test_detect_default_tools_finds_windows_cubeclt_binaries_from_root(tmp_path, monkeypatch):
+    cube_root = tmp_path / "STM32CubeCLT"
+    (cube_root / "CMake" / "bin").mkdir(parents=True)
+    (cube_root / "Ninja" / "bin").mkdir(parents=True)
+    (cube_root / "GNU-tools-for-STM32" / "bin").mkdir(parents=True)
+    (cube_root / "STM32CubeProgrammer" / "bin").mkdir(parents=True)
+    (cube_root / "STLink-gdb-server" / "bin").mkdir(parents=True)
+    (cube_root / "CMake" / "bin" / "cmake.exe").write_text("", encoding="utf-8")
+    (cube_root / "Ninja" / "bin" / "ninja.exe").write_text("", encoding="utf-8")
+    (cube_root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-gcc.exe").write_text("", encoding="utf-8")
+    (cube_root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-gdb.exe").write_text("", encoding="utf-8")
+    (cube_root / "GNU-tools-for-STM32" / "bin" / "arm-none-eabi-objcopy.exe").write_text("", encoding="utf-8")
+    (cube_root / "STM32CubeProgrammer" / "bin" / "STM32_Programmer_CLI.exe").write_text("", encoding="utf-8")
+    (cube_root / "STLink-gdb-server" / "bin" / "ST-LINK_gdbserver.exe").write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("STM32CUBECLT_ROOT", str(cube_root))
+    monkeypatch.setattr(MODULE.shutil, "which", lambda name: None)
+
+    detected = MODULE.detect_default_tools(host_os="windows")
+
+    assert detected["stm32cubeclt_root"] == str(cube_root)
+    assert detected["cmake"].endswith("/CMake/bin/cmake.exe")
+    assert detected["ninja"].endswith("/Ninja/bin/ninja.exe")
+    assert detected["arm_none_eabi_gcc"].endswith("/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe")
+    assert detected["arm_none_eabi_gdb"].endswith("/GNU-tools-for-STM32/bin/arm-none-eabi-gdb.exe")
+    assert detected["arm_none_eabi_objcopy"].endswith("/GNU-tools-for-STM32/bin/arm-none-eabi-objcopy.exe")
+    assert detected["stm32cubeprogrammer_cli"].endswith("/STM32CubeProgrammer/bin/STM32_Programmer_CLI.exe")
+    assert detected["stlink_gdb_server"].endswith("/STLink-gdb-server/bin/ST-LINK_gdbserver.exe")
+
+
+def test_detect_default_tools_accepts_versioned_windows_cubeclt_root(tmp_path, monkeypatch):
+    parent = tmp_path / "vendor"
+    base_root = parent / "STM32CubeCLT"
+    versioned_root = parent / "STM32CubeCLT_1.21.0"
+    (versioned_root / "STM32CubeProgrammer" / "bin").mkdir(parents=True)
+    (versioned_root / "STM32CubeProgrammer" / "bin" / "STM32_Programmer_CLI.exe").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(MODULE, "WINDOWS_DEFAULT_CUBECLT_ROOTS", [str(base_root)])
+    monkeypatch.delenv("STM32CUBECLT_ROOT", raising=False)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda name: None)
+
+    detected = MODULE.detect_default_tools(host_os="windows")
+
+    assert detected["stm32cubeclt_root"] == str(versioned_root)
+    assert detected["stm32cubeprogrammer_cli"].endswith("/STM32CubeProgrammer/bin/STM32_Programmer_CLI.exe")

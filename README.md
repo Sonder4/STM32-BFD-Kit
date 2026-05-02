@@ -39,6 +39,7 @@ It standardizes IOC discovery, active profile generation, flashing, RTT logging,
 - `BFD-Kit/scripts/bfd_repo_validate.py`: repository self-check before sync or publish
 - `BFD-Kit/scripts/bfd_stlink_rtt.py`: polling-based ST-Link RTT capture built on `STM32_Programmer_CLI`
 - `BFD-Kit/docs/platform_compatibility.md`: Ubuntu/Windows migration notes and tool-path conventions
+- `BFD-Kit/docs/platform_validation_2026-05-02.md`: latest Ubuntu actual validation plus Windows static coverage record
 - `BFD-Kit/docs/embed_ai_tool_mapping.md`: absorbed vs. rejected `embed-ai-tool` capabilities and convergence notes
 - `BFD-Kit/.runtime/venv`: local Python runtime installed on demand for portable script execution
 - `BFD-Kit/scripts/migrate_bfd_skills.py`: import/cutover utility

@@ -29,6 +29,10 @@ Recommended bootstrap order:
 4. Verify the shared CubeCLT build lane and artifact bundle
 5. Build or flash with the detected profile
 
+Latest validation record:
+
+- `docs/platform_validation_2026-05-02.md`
+
 Preferred bootstrap command when moving between Ubuntu and Windows:
 
 ```bash
