@@ -8,7 +8,6 @@ English summary: BFD-Kit keeps one evidence-oriented STM32 workflow across AI ag
 
 ## 项目说明
 
-- 本项目借助 [HKUDS/CLI-Anything](https://github.com/HKUDS/CLI-Anything) 对 J-Link 相关流程进行了 CLI 化处理。
 - 当前版本已明确区分 probe 能力边界：ST-Link 支持烧录和 RTT 轮询，但不提供与 J-Link HSS 对等的能力。
 - 当前版本在 Ubuntu 22.04 下验证最充分，但本轮已经补上围绕 `STM32CubeCLT` 的 Windows/Linux 路径统一层。
 - `scripts/bfd_tool_config.py` 与 `scripts/bfd_project_detect.py` 是当前跨平台接入的两个基础入口。
